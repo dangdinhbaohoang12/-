@@ -1,66 +1,64 @@
 name: JavaScript Tests
 
 on:
-push:
-branches:
-- main
-- master
-- next
-- patch-*
-pull_request:
+  push:
+    branches:
+      - main
+      - master
+      - next
+      - patch-*
+  pull_request:
 
 permissions:
-contents: read
+  contents: read
 
 jobs:
-test:
-name: Test JavaScript
-runs-on: ubuntu-latest
+  test:
+    name: Test JavaScript
+    runs-on: ubuntu-latest
 
-```
-strategy:
-  fail-fast: false
-  matrix:
-    node-version:
-      - 20
-      - 22
-      - 24
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version:
+          - 20
+          - 22
+          - 24
 
-steps:
-  - name: Checkout repository
-    uses: actions/checkout@v7
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-  - name: Setup Node.js
-    uses: actions/setup-node@v7
-    with:
-      node-version: ${{ matrix.node-version }}
-      cache: npm
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
 
-  - name: Verify Node.js and npm
-    run: |
-      node --version
-      npm --version
+      - name: Verify Node.js and npm
+        run: |
+          node --version
+          npm --version
 
-  - name: Install dependencies
-    run: npm ci
+      - name: Install dependencies
+        run: npm ci
 
-  - name: Check syntax
-    run: |
-      find . \
-        -type f \
-        \( -name "*.js" -o -name "*.mjs" -o -name "*.cjs" \) \
-        -not -path "./node_modules/*" \
-        -print0 |
-      while IFS= read -r -d '' file; do
-        echo "Checking: $file"
-        node --check "$file"
-      done
+      - name: Check syntax
+        run: |
+          find . \
+            -type f \
+            \( -name "*.js" -o -name "*.mjs" -o -name "*.cjs" \) \
+            -not -path "./node_modules/*" \
+            -print0 | while IFS= read -r -d '' file; do
+            echo "Checking: $file"
+            node --check "$file"
+          done
 
-  - name: Run tests
-    run: npm test
+      - name: Run tests
+        run: npm test
 
-  - name: Run lint
-    run: npm run lint --if-present
+      - name: Run lint
+        run: npm run lint --if-present
 
-  - name: Build project
-    run: npm run build --if-present
+      - name: Build project
+        run: npm run build --if-present
