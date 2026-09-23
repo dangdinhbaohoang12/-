@@ -18,8 +18,8 @@ interface PermitState {
   // Actions
   login: (username: string, pinCode: string) => boolean;
   logout: () => void;
-  createPermit: (data: Partial<Permit>) => Permit;
-  updatePermit: (id: string, data: Partial<Permit>) => void;
+  createPermit: (data: Partial<Permit>) => Promise<Permit>;
+  updatePermit: (id: string, data: Partial<Permit>) => Promise<void>;
   deletePermit: (id: string) => void;
   submitPermit: (id: string, pinCode: string) => boolean;
   approvePermit: (id: string, action: 'APPROVE' | 'REJECT', comment: string, pinCode: string) => boolean;
@@ -75,7 +75,7 @@ export const usePermitStore = create<PermitState>()(
         return `PTW-${year}${month}-${String(count).padStart(4, '0')}`;
       },
 
-      createPermit: (data: Partial<Permit>) => {
+      createPermit: async (data: Partial<Permit>) => {
         const state = get();
         const permit: Permit = {
           id: uuidv4(),
@@ -106,13 +106,13 @@ export const usePermitStore = create<PermitState>()(
         const newPermits = [...state.permits, permit];
         set({ permits: newPermits, selectedPermit: permit });
         
-        // Lưu offline
-        savePermitOffline(permit);
+        // Lưu offline trước khi báo thành công cho người dùng.
+        await savePermitOffline(permit);
         
         return permit;
       },
 
-      updatePermit: (id: string, data: Partial<Permit>) => {
+      updatePermit: async (id: string, data: Partial<Permit>) => {
         const state = get();
         const updatedPermits = state.permits.map(p => 
           p.id === id ? { ...p, ...data, updatedAt: new Date().toISOString() } : p
@@ -121,7 +121,7 @@ export const usePermitStore = create<PermitState>()(
         set({ permits: updatedPermits, selectedPermit: updatedPermit || null });
         
         if (updatedPermit) {
-          savePermitOffline(updatedPermit);
+          await savePermitOffline(updatedPermit);
         }
       },
 
@@ -141,8 +141,10 @@ export const usePermitStore = create<PermitState>()(
           return false;
         }
 
-        // Kiểm tra SIMOPS trước khi submit
-        const conflicts = checkSimOpsForPermit(permit, state.permits);
+        // SIMOPS chỉ xét permit đang hoạt động, vì vậy cần kiểm tra trạng thái
+        // ứng viên SUBMITTED thay vì bản DRAFT hiện tại.
+        const candidatePermit: Permit = { ...permit, status: 'SUBMITTED' };
+        const conflicts = checkSimOpsForPermit(candidatePermit, state.permits);
         const hasBlockConflict = conflicts.some(c => c.conflictLevel === 'BLOCK');
         
         if (hasBlockConflict) {
@@ -163,6 +165,7 @@ export const usePermitStore = create<PermitState>()(
           approverRole: user.role,
           action: 'SUBMIT',
           signatureHash: signature.hash,
+          signatureTrust: 'DEMO_ONLY',
           timestamp: new Date().toISOString()
         };
 
@@ -194,6 +197,24 @@ export const usePermitStore = create<PermitState>()(
           return false;
         }
 
+        if (action === 'APPROVE') {
+          const approvableStatuses: PermitStatus[] = ['VERIFIED_ISOLATED', 'REVIEWED', 'CLOSED_OUT'];
+          if (!approvableStatuses.includes(permit.status)) {
+            alert('Trạng thái PTW hiện tại không thể được phê duyệt!');
+            return false;
+          }
+
+          if (permit.status === 'VERIFIED_ISOLATED' && user.role !== 'DEPUTY_OIM') {
+            alert('Chỉ Giàn Phó mới có quyền rà soát PTW!');
+            return false;
+          }
+
+          if (permit.status === 'REVIEWED' && user.role !== 'OIM') {
+            alert('Chỉ OIM mới có quyền phát hành PTW!');
+            return false;
+          }
+        }
+
         const signature = createDigitalSignature(
           `${permit.id}:${permit.permitNumber}:${action}`,
           pinCode,
@@ -208,6 +229,7 @@ export const usePermitStore = create<PermitState>()(
           action,
           comment,
           signatureHash: signature.hash,
+          signatureTrust: 'DEMO_ONLY',
           timestamp: new Date().toISOString()
         };
 
@@ -271,6 +293,7 @@ export const usePermitStore = create<PermitState>()(
           approverRole: 'FPS',
           action: 'VERIFY',
           signatureHash: signature.hash,
+          signatureTrust: 'DEMO_ONLY',
           timestamp: new Date().toISOString()
         };
 
@@ -312,6 +335,7 @@ export const usePermitStore = create<PermitState>()(
           approverRole: user.role,
           action: 'CLOSE',
           signatureHash: signature.hash,
+          signatureTrust: 'DEMO_ONLY',
           timestamp: new Date().toISOString()
         };
 
@@ -399,7 +423,12 @@ export const usePermitStore = create<PermitState>()(
       name: 'offshore-ptw-storage',
       partialize: (state) => ({ 
         permits: state.permits,
-        currentUser: state.currentUser 
+        currentUser: null
+      }),
+      merge: (persistedState, currentState) => ({
+        ...currentState,
+        ...(persistedState as Partial<PermitState>),
+        currentUser: null
       })
     }
   )

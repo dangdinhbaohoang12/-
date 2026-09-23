@@ -175,7 +175,7 @@ export const PermitFormPage: React.FC = () => {
     return { startDate, endDate };
   };
 
-  const handleSave = (): boolean => {
+  const handleSave = async (): Promise<boolean> => {
     if (!formData.title || !formData.location) {
       alert('Vui lòng nhập tên công việc và vị trí!');
       return false;
@@ -203,18 +203,23 @@ export const PermitFormPage: React.FC = () => {
       pressureIsolated: formData.pressureIsolated
     };
 
-    if (selectedPermit) {
-      updatePermit(selectedPermit.id, permitData);
-      alert('Đã cập nhật PTW thành công!');
-    } else {
-      const newPermit = createPermit(permitData);
-      selectPermit(newPermit);
-      alert('Đã tạo PTW thành công!');
+    try {
+      if (selectedPermit) {
+        await updatePermit(selectedPermit.id, permitData);
+        alert('Đã cập nhật PTW thành công!');
+      } else {
+        const newPermit = await createPermit(permitData);
+        selectPermit(newPermit);
+        alert('Đã tạo PTW thành công!');
+      }
+      return true;
+    } catch {
+      alert('Không thể lưu PTW ngoại tuyến. Vui lòng thử lại!');
+      return false;
     }
-    return true;
   };
 
-  const handleSubmit = (pin: string) => {
+  const handleSubmit = async (pin: string) => {
     if (formData.jsaItems.length === 0) {
       alert('Bắt buộc phải có ít nhất 1 mục JSA!');
       setActiveTab(2);
@@ -226,7 +231,7 @@ export const PermitFormPage: React.FC = () => {
     }
 
     const permitId = selectedPermit?.id;
-    if (!handleSave()) {
+    if (!await handleSave()) {
       return;
     }
 
@@ -710,9 +715,9 @@ export const PermitFormPage: React.FC = () => {
                     setShowPinModal(false);
                     setPinCode('');
                     if (submitAction === 'SAVE') {
-                      handleSave();
+                      void handleSave();
                     } else if (submitAction === 'SUBMIT') {
-                      handleSubmit(pinToSubmit);
+                      void handleSubmit(pinToSubmit);
                     }
                   } else {
                     alert('PIN không đúng!');

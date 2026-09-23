@@ -1,16 +1,19 @@
 import CryptoJS from 'crypto-js';
 
-const SECRET_KEY = 'offshore-ptw-secret-key-2024';
-
 export interface SignatureResult {
   hash: string;
   timestamp: string;
   isValid: boolean;
+  isTrusted: false;
 }
 
 /**
- * Tạo chữ ký số cho việc phê duyệt PTW
- * Sử dụng HMAC-SHA256 để tạo hash từ nội dung và PIN
+ * Tạo checksum phục vụ bản demo client-only.
+ *
+ * Đây KHÔNG phải chữ ký số đáng tin cậy: mọi mã chạy trong trình duyệt đều có
+ * thể bị sửa và PIN demo có thể bị dò. Bản production phải gửi nội dung tới
+ * backend đã xác thực để backend ký/xác minh bằng bí mật không bao giờ gửi tới
+ * trình duyệt (hoặc dùng khóa bất đối xứng riêng cho từng người dùng).
  */
 export function createDigitalSignature(
   content: string,
@@ -19,17 +22,19 @@ export function createDigitalSignature(
 ): SignatureResult {
   const timestamp = new Date().toISOString();
   const dataToSign = `${content}|${userId}|${timestamp}|${pinCode}`;
-  const hash = CryptoJS.HmacSHA256(dataToSign, SECRET_KEY).toString(CryptoJS.enc.Hex);
+  const hash = CryptoJS.SHA256(dataToSign).toString(CryptoJS.enc.Hex);
   
   return {
     hash,
     timestamp,
-    isValid: true
+    isValid: true,
+    isTrusted: false
   };
 }
 
 /**
- * Xác thực chữ ký số
+ * So sánh checksum demo. Kết quả true chỉ cho biết dữ liệu khớp; nó không xác
+ * thực danh tính người ký và không được dùng làm bằng chứng phê duyệt.
  */
 export function verifyDigitalSignature(
   content: string,
@@ -39,7 +44,7 @@ export function verifyDigitalSignature(
   pinCode: string
 ): boolean {
   const dataToSign = `${content}|${userId}|${timestamp}|${pinCode}`;
-  const expectedHash = CryptoJS.HmacSHA256(dataToSign, SECRET_KEY).toString(CryptoJS.enc.Hex);
+  const expectedHash = CryptoJS.SHA256(dataToSign).toString(CryptoJS.enc.Hex);
   return expectedHash === signatureHash;
 }
 
@@ -64,8 +69,9 @@ function buildPermitQrContent(payload: Omit<PermitQrPayload, 'signature'>): stri
 }
 
 /**
- * Tạo payload QR đã ký cho permit, cho phép người quét xác thực
- * tính xác thực và phát hiện giả mạo (permit đã bị thay đổi sau khi ký).
+ * Tạo payload QR kèm checksum cho bản demo. Checksum này có thể phát hiện dữ
+ * liệu không khớp với permit hiện tại, nhưng bất kỳ ai cũng có thể tạo lại nên
+ * không chứng minh tính xác thực.
  */
 export function createPermitQrPayload(permit: {
   id: string;
@@ -79,12 +85,12 @@ export function createPermitQrPayload(permit: {
     status: permit.status,
     updatedAt: permit.updatedAt
   };
-  const signature = CryptoJS.HmacSHA256(buildPermitQrContent(base), SECRET_KEY).toString(CryptoJS.enc.Hex);
+  const signature = CryptoJS.SHA256(buildPermitQrContent(base)).toString(CryptoJS.enc.Hex);
   return { ...base, signature };
 }
 
 /**
- * Xác thực payload QR đã quét: kiểm tra chữ ký khớp với nội dung permit hiện tại.
+ * Kiểm tra checksum QR demo khớp với nội dung permit hiện tại.
  */
 export function verifyPermitQrPayload(
   payload: PermitQrPayload,
@@ -96,7 +102,7 @@ export function verifyPermitQrPayload(
     status: currentPermit.status,
     updatedAt: currentPermit.updatedAt
   };
-  const expectedSignature = CryptoJS.HmacSHA256(buildPermitQrContent(base), SECRET_KEY).toString(CryptoJS.enc.Hex);
+  const expectedSignature = CryptoJS.SHA256(buildPermitQrContent(base)).toString(CryptoJS.enc.Hex);
   return (
     expectedSignature === payload.signature &&
     payload.permitId === currentPermit.id &&

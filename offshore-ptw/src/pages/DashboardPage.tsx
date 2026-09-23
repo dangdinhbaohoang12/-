@@ -596,7 +596,7 @@ export const DashboardPage: React.FC = () => {
                 textAlign: 'center',
                 marginBottom: '16px'
               }}>
-                <strong>Chữ ký số (QR Code)</strong>
+                <strong>Checksum demo (QR Code)</strong>
                 <div style={{ marginTop: '10px' }}>
                   <QRCodeSVG
                     value={JSON.stringify(createPermitQrPayload(selectedPermitForDetail))}
@@ -604,7 +604,7 @@ export const DashboardPage: React.FC = () => {
                   />
                 </div>
                 <div style={{ fontSize: '10px', color: '#999', marginTop: '8px' }}>
-                  Quét để xác thực PTW (nội dung đã được ký, chống giả mạo)
+                  Chỉ kiểm tra dữ liệu demo, không phải chữ ký số đáng tin cậy
                 </div>
                 <div style={{ marginTop: '12px', textAlign: 'left' }}>
                   <label style={{ display: 'block', marginBottom: '6px', fontSize: '11px', fontWeight: 'bold' }}>

@@ -10,6 +10,7 @@ describe('Digital Signature', () => {
       expect(result.hash.length).toBe(64); // SHA256 produces 64 hex characters
       expect(result.timestamp).toBeDefined();
       expect(result.isValid).toBe(true);
+      expect(result.isTrusted).toBe(false);
     });
 
     it('should produce different signatures for different content', () => {

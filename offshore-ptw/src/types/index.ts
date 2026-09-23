@@ -46,6 +46,8 @@ export interface PermitApproval {
   action: 'APPROVE' | 'REJECT' | 'VERIFY' | 'CLOSE' | 'SUBMIT';
   comment?: string;
   signatureHash: string;
+  /** Client-only demo checksum; it is not a trusted digital signature. */
+  signatureTrust: 'DEMO_ONLY';
   timestamp: string;
 }
 
