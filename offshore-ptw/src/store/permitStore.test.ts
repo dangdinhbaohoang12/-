@@ -77,6 +77,31 @@ describe('permitStore persistence', () => {
     await expect(usePermitStore.getState().updatePermit('permit-1', { title: 'Updated' })).rejects.toBe(failure);
   });
 
+  it('persists the submitted revision before reporting success', async () => {
+    const permit = createPermit();
+    resetStore([permit]);
+
+    await expect(usePermitStore.getState().submitPermit(permit.id, '0004')).resolves.toBe(true);
+
+    expect(savePermitOfflineMock).toHaveBeenCalledOnce();
+    const persistedPermit = savePermitOfflineMock.mock.calls[0][0] as Permit;
+    expect(persistedPermit).toMatchObject({ id: permit.id, status: 'SUBMITTED' });
+    expect(persistedPermit.updatedAt).not.toBe(permit.updatedAt);
+    expect(persistedPermit.approvals).toHaveLength(1);
+    expect(persistedPermit.approvals[0].action).toBe('SUBMIT');
+    expect(usePermitStore.getState().permits[0]).toEqual(persistedPermit);
+  });
+
+  it('propagates submission persistence failures without changing the permit', async () => {
+    const permit = createPermit();
+    const failure = new Error('IndexedDB unavailable');
+    savePermitOfflineMock.mockRejectedValueOnce(failure);
+    resetStore([permit]);
+
+    await expect(usePermitStore.getState().submitPermit(permit.id, '0004')).rejects.toBe(failure);
+    expect(usePermitStore.getState().permits[0]).toEqual(permit);
+  });
+
   it('persists permits without PIN-bearing current-user data', () => {
     resetStore([createPermit()]);
 
@@ -105,7 +130,16 @@ describe('permitStore workflow guards', () => {
     vi.stubGlobal('alert', vi.fn());
   });
 
-  it('checks SIMOPS using the SUBMITTED candidate status', () => {
+  it('rejects submission unless the permit is a draft', async () => {
+    const permit = createPermit({ status: 'SUBMITTED' });
+    resetStore([permit]);
+
+    await expect(usePermitStore.getState().submitPermit(permit.id, '0004')).resolves.toBe(false);
+    expect(savePermitOfflineMock).not.toHaveBeenCalled();
+    expect(usePermitStore.getState().permits[0]).toEqual(permit);
+  });
+
+  it('checks SIMOPS using the SUBMITTED candidate status', async () => {
     const draftHotWork = createPermit({ type: 'HOT_WORK' });
     const activeConfinedSpace = createPermit({
       id: 'permit-2',
@@ -115,7 +149,7 @@ describe('permitStore workflow guards', () => {
     });
     resetStore([draftHotWork, activeConfinedSpace]);
 
-    expect(usePermitStore.getState().submitPermit('permit-1', '0004')).toBe(false);
+    await expect(usePermitStore.getState().submitPermit('permit-1', '0004')).resolves.toBe(false);
     expect(usePermitStore.getState().permits[0].status).toBe('DRAFT');
     expect(usePermitStore.getState().permits[0].approvals).toHaveLength(0);
   });

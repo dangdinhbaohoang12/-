@@ -237,7 +237,7 @@ export const PermitFormPage: React.FC = () => {
 
     const targetId = permitId || usePermitStore.getState().selectedPermit?.id;
     if (targetId) {
-      const submitted = submitPermit(targetId, pin);
+      const submitted = await submitPermit(targetId, pin);
       if (submitted) {
         alert('Đã gửi PTW để phê duyệt!');
       }

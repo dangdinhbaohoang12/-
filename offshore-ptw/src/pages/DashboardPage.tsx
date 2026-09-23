@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { usePermitStore } from '../store/permitStore';
-import { PermitStatus, Role } from '../types';
+import { Permit, PermitStatus, Role } from '../types';
 import { QRCodeSVG } from 'qrcode.react';
 import { createPermitQrPayload, verifyPermitQrPayload, PermitQrPayload } from '../utils/digitalSignature';
 
@@ -23,6 +23,28 @@ const TYPE_COLORS: Record<string, string> = {
   ELECTRICAL: '#1976d2'
 };
 
+type QrScanResult = {
+  status: 'AUTHORIZED' | 'CHECKSUM_VALID' | 'INVALID';
+  permitId: string;
+  updatedAt: string;
+};
+
+function hasValidIssuanceApproval(permit: Permit): boolean {
+  const hasValidIssuanceState = permit.status === 'ISSUED' || permit.status === 'REVALIDATED';
+  const approvals = permit.approvals ?? [];
+  const hasFpsVerification = approvals.some(
+    approval => approval.action === 'VERIFY' && approval.approverRole === 'FPS'
+  );
+  const hasDeputyReview = approvals.some(
+    approval => approval.action === 'APPROVE' && approval.approverRole === 'DEPUTY_OIM'
+  );
+  const hasOimApproval = approvals.some(
+    approval => approval.action === 'APPROVE' && approval.approverRole === 'OIM'
+  );
+
+  return hasValidIssuanceState && hasFpsVerification && hasDeputyReview && hasOimApproval;
+}
+
 export const DashboardPage: React.FC = () => {
   const permits = usePermitStore(state => state.permits);
   const currentUser = usePermitStore(state => state.currentUser);
@@ -43,7 +65,13 @@ export const DashboardPage: React.FC = () => {
   const [approvePin, setApprovePin] = useState('');
   const [currentApprovePermit, setCurrentApprovePermit] = useState<any>(null);
   const [qrScanInput, setQrScanInput] = useState('');
-  const [qrScanResult, setQrScanResult] = useState<'VALID' | 'INVALID' | null>(null);
+  const [qrScanResult, setQrScanResult] = useState<QrScanResult | null>(null);
+  const visibleQrScanResult =
+    selectedPermitForDetail &&
+    qrScanResult?.permitId === selectedPermitForDetail.id &&
+    qrScanResult.updatedAt === selectedPermitForDetail.updatedAt
+      ? qrScanResult.status
+      : null;
 
   const activeStatuses: PermitStatus[] = ['SUBMITTED', 'VERIFIED_ISOLATED', 'REVIEWED', 'ISSUED', 'REVALIDATED'];
   const activePermits = permits.filter(p => activeStatuses.includes(p.status));
@@ -604,13 +632,14 @@ export const DashboardPage: React.FC = () => {
                   />
                 </div>
                 <div style={{ fontSize: '10px', color: '#999', marginTop: '8px' }}>
-                  Chỉ kiểm tra dữ liệu demo, không phải chữ ký số đáng tin cậy
+                  Chỉ kiểm tra checksum demo, không phải chữ ký số đáng tin cậy; quyền làm việc còn phụ thuộc trạng thái và phê duyệt
                 </div>
                 <div style={{ marginTop: '12px', textAlign: 'left' }}>
-                  <label style={{ display: 'block', marginBottom: '6px', fontSize: '11px', fontWeight: 'bold' }}>
+                  <label htmlFor="permit-qr-input" style={{ display: 'block', marginBottom: '6px', fontSize: '11px', fontWeight: 'bold' }}>
                     Dán nội dung QR đã quét để xác thực
                   </label>
                   <textarea
+                    id="permit-qr-input"
                     value={qrScanInput}
                     onChange={(e) => { setQrScanInput(e.target.value); setQrScanResult(null); }}
                     rows={3}
@@ -629,9 +658,21 @@ export const DashboardPage: React.FC = () => {
                       try {
                         const payload = JSON.parse(qrScanInput) as PermitQrPayload;
                         const isValid = verifyPermitQrPayload(payload, selectedPermitForDetail);
-                        setQrScanResult(isValid ? 'VALID' : 'INVALID');
+                        setQrScanResult({
+                          status: isValid
+                            ? hasValidIssuanceApproval(selectedPermitForDetail)
+                              ? 'AUTHORIZED'
+                              : 'CHECKSUM_VALID'
+                            : 'INVALID',
+                          permitId: selectedPermitForDetail.id,
+                          updatedAt: selectedPermitForDetail.updatedAt
+                        });
                       } catch {
-                        setQrScanResult('INVALID');
+                        setQrScanResult({
+                          status: 'INVALID',
+                          permitId: selectedPermitForDetail.id,
+                          updatedAt: selectedPermitForDetail.updatedAt
+                        });
                       }
                     }}
                     disabled={!qrScanInput}
@@ -647,21 +688,27 @@ export const DashboardPage: React.FC = () => {
                       opacity: !qrScanInput ? 0.5 : 1
                     }}
                   >
-                    Xác thực chữ ký
+                    Kiểm tra checksum
                   </button>
-                  {qrScanResult && (
+                  {visibleQrScanResult && (
                     <div
                       role="status"
                       style={{
                         marginTop: '8px',
                         fontSize: '12px',
                         fontWeight: 'bold',
-                        color: qrScanResult === 'VALID' ? '#2e7d32' : '#c62828'
+                        color: visibleQrScanResult === 'AUTHORIZED'
+                          ? '#2e7d32'
+                          : visibleQrScanResult === 'CHECKSUM_VALID'
+                            ? '#ef6c00'
+                            : '#c62828'
                       }}
                     >
-                      {qrScanResult === 'VALID'
-                        ? '✓ Chữ ký hợp lệ, PTW xác thực.'
-                        : '✗ Chữ ký không hợp lệ hoặc PTW đã bị thay đổi.'}
+                      {visibleQrScanResult === 'AUTHORIZED'
+                        ? '✓ Checksum khớp; PTW có trạng thái và lịch sử phê duyệt hợp lệ.'
+                        : visibleQrScanResult === 'CHECKSUM_VALID'
+                          ? '✓ Checksum khớp, nhưng PTW chưa đủ trạng thái và lịch sử phê duyệt.'
+                          : '✗ Checksum không khớp hoặc PTW đã bị thay đổi.'}
                     </div>
                   )}
                 </div>

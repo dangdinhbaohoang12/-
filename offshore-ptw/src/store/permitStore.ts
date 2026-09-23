@@ -21,7 +21,7 @@ interface PermitState {
   createPermit: (data: Partial<Permit>) => Promise<Permit>;
   updatePermit: (id: string, data: Partial<Permit>) => Promise<void>;
   deletePermit: (id: string) => void;
-  submitPermit: (id: string, pinCode: string) => boolean;
+  submitPermit: (id: string, pinCode: string) => Promise<boolean>;
   approvePermit: (id: string, action: 'APPROVE' | 'REJECT', comment: string, pinCode: string) => boolean;
   verifyPermit: (id: string, pinCode: string) => boolean;
   closePermit: (id: string, pinCode: string) => boolean;
@@ -130,11 +130,13 @@ export const usePermitStore = create<PermitState>()(
         set({ permits: state.permits.filter(p => p.id !== id) });
       },
 
-      submitPermit: (id: string, pinCode: string) => {
+      submitPermit: async (id: string, pinCode: string) => {
         const state = get();
         const user = state.currentUser;
         const permit = state.permits.find(p => p.id === id);
         if (!user || !permit) return false;
+
+        if (permit.status !== 'DRAFT') return false;
 
         if (user.pinCode !== pinCode) {
           alert('PIN không đúng!');
@@ -169,14 +171,18 @@ export const usePermitStore = create<PermitState>()(
           timestamp: new Date().toISOString()
         };
 
+        const updatedPermit: Permit = {
+          ...permit,
+          status: 'SUBMITTED',
+          approvals: [...permit.approvals, approval],
+          updatedAt: new Date().toISOString()
+        };
+
+        await savePermitOffline(updatedPermit);
+
         set({ 
           permits: state.permits.map(p => 
-            p.id === id ? {
-              ...p,
-              status: 'SUBMITTED',
-              approvals: [...p.approvals, approval],
-              updatedAt: new Date().toISOString()
-            } : p
+            p.id === id ? updatedPermit : p
           ),
           simopsConflicts: conflicts
         });

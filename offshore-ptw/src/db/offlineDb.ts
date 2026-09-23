@@ -32,9 +32,7 @@ export async function savePermitOffline(permit: Permit): Promise<void> {
     // Loại bỏ các bản ghi SAVE_PERMIT chưa đồng bộ cũ của cùng permit này
     // để tránh hàng đợi phình to vô hạn (chỉ giữ trạng thái mới nhất).
     const stalePermitSaves = await db.syncQueue
-      .where('action')
-      .equals('SAVE_PERMIT')
-      .filter(item => item.data?.id === permit.id)
+      .filter(item => item.action === 'SAVE_PERMIT' && item.data?.id === permit.id)
       .toArray();
     if (stalePermitSaves.length > 0) {
       await db.syncQueue.bulkDelete(stalePermitSaves.map(item => item.id));
