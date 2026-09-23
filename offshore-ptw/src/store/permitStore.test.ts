@@ -162,6 +162,14 @@ describe('permitStore workflow guards', () => {
     expect(usePermitStore.getState().permits[0].approvals).toHaveLength(0);
   });
 
+  it('rejects APPROVE for a closed-out permit without creating an approval', () => {
+    resetStore([createPermit({ status: 'CLOSED_OUT' })], DEMO_USERS[0]);
+
+    expect(usePermitStore.getState().approvePermit('permit-1', 'APPROVE', '', '0001')).toBe(false);
+    expect(usePermitStore.getState().permits[0].status).toBe('CLOSED_OUT');
+    expect(usePermitStore.getState().permits[0].approvals).toHaveLength(0);
+  });
+
   it('allows only DEPUTY_OIM to advance VERIFIED_ISOLATED to REVIEWED', () => {
     resetStore([createPermit({ status: 'VERIFIED_ISOLATED' })], DEMO_USERS[0]);
     expect(usePermitStore.getState().approvePermit('permit-1', 'APPROVE', '', '0001')).toBe(false);

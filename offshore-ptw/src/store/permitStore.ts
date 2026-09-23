@@ -204,7 +204,7 @@ export const usePermitStore = create<PermitState>()(
         }
 
         if (action === 'APPROVE') {
-          const approvableStatuses: PermitStatus[] = ['VERIFIED_ISOLATED', 'REVIEWED', 'CLOSED_OUT'];
+          const approvableStatuses: PermitStatus[] = ['VERIFIED_ISOLATED', 'REVIEWED'];
           if (!approvableStatuses.includes(permit.status)) {
             alert('Trạng thái PTW hiện tại không thể được phê duyệt!');
             return false;
