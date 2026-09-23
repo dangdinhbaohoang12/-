@@ -43,7 +43,7 @@ export interface PermitApproval {
   permitId: string;
   approverId: string;
   approverRole: Role;
-  action: 'APPROVE' | 'REJECT' | 'VERIFY' | 'CLOSE';
+  action: 'APPROVE' | 'REJECT' | 'VERIFY' | 'CLOSE' | 'SUBMIT';
   comment?: string;
   signatureHash: string;
   timestamp: string;

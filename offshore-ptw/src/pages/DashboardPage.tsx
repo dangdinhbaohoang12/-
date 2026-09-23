@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { usePermitStore } from '../store/permitStore';
 import { PermitStatus, Role } from '../types';
 import { QRCodeSVG } from 'qrcode.react';
+import { createPermitQrPayload, verifyPermitQrPayload, PermitQrPayload } from '../utils/digitalSignature';
 
 const STATUS_LABELS: Record<PermitStatus, string> = {
   DRAFT: 'Nháp',
@@ -32,12 +33,17 @@ export const DashboardPage: React.FC = () => {
   const getPendingApprovals = usePermitStore(state => state.getPendingApprovals);
 
   const [selectedDeck, setSelectedDeck] = useState<string | null>(null);
-  const [selectedPermitForDetail, setSelectedPermitForDetail] = useState<any>(null);
+  const [selectedPermitId, setSelectedPermitId] = useState<string | null>(null);
+  const selectedPermitForDetail = selectedPermitId
+    ? permits.find(p => p.id === selectedPermitId) || null
+    : null;
   const [showApproveModal, setShowApproveModal] = useState(false);
-  const [approveAction, setApproveAction] = useState<'APPROVE' | 'REJECT'>('APPROVE');
+  const [approveAction, setApproveAction] = useState<'APPROVE' | 'REJECT' | 'VERIFY'>('APPROVE');
   const [approveComment, setApproveComment] = useState('');
   const [approvePin, setApprovePin] = useState('');
   const [currentApprovePermit, setCurrentApprovePermit] = useState<any>(null);
+  const [qrScanInput, setQrScanInput] = useState('');
+  const [qrScanResult, setQrScanResult] = useState<'VALID' | 'INVALID' | null>(null);
 
   const activeStatuses: PermitStatus[] = ['SUBMITTED', 'VERIFIED_ISOLATED', 'REVIEWED', 'ISSUED', 'REVALIDATED'];
   const activePermits = permits.filter(p => activeStatuses.includes(p.status));
@@ -53,7 +59,7 @@ export const DashboardPage: React.FC = () => {
 
   const decks = ['Upper Deck', 'Main Deck', 'Cellar Deck', 'Drill Floor'];
 
-  const handleApproveClick = (permit: any, action: 'APPROVE' | 'REJECT') => {
+  const handleApproveClick = (permit: any, action: 'APPROVE' | 'REJECT' | 'VERIFY') => {
     setCurrentApprovePermit(permit);
     setApproveAction(action);
     setApproveComment('');
@@ -63,7 +69,16 @@ export const DashboardPage: React.FC = () => {
 
   const handleApproveConfirm = () => {
     if (!currentApprovePermit || !currentUser) return;
-    
+
+    if (approveAction === 'VERIFY') {
+      const success = verifyPermit(currentApprovePermit.id, approvePin);
+      if (success) {
+        alert('Đã xác nhận & cô lập PTW thành công!');
+        setShowApproveModal(false);
+      }
+      return;
+    }
+
     const success = approvePermit(currentApprovePermit.id, approveAction, approveComment, approvePin);
     if (success) {
       alert(`Đã ${approveAction === 'APPROVE' ? 'phê duyệt' : 'từ chối'} thành công!`);
@@ -176,18 +191,25 @@ export const DashboardPage: React.FC = () => {
                 const hotWorkCount = deckPermits.filter(p => p.type === 'HOT_WORK').length;
                 const coldWorkCount = deckPermits.filter(p => p.type === 'COLD_WORK').length;
                 const confinedCount = deckPermits.filter(p => p.type === 'CONFINED_SPACE').length;
+                const radiographyCount = deckPermits.filter(p => p.type === 'RADIOGRAPHY').length;
+                const electricalCount = deckPermits.filter(p => p.type === 'ELECTRICAL').length;
                 
                 return (
-                  <div
+                  <button
                     key={deck}
+                    type="button"
                     onClick={() => setSelectedDeck(selectedDeck === deck ? null : deck)}
+                    aria-pressed={selectedDeck === deck}
                     style={{
                       padding: '20px',
                       border: `2px solid ${selectedDeck === deck ? '#1a237e' : '#e0e0e0'}`,
                       borderRadius: '8px',
                       cursor: 'pointer',
                       background: selectedDeck === deck ? '#e8eaf6' : 'white',
-                      transition: 'all 0.3s'
+                      transition: 'all 0.3s',
+                      textAlign: 'left',
+                      font: 'inherit',
+                      width: '100%'
                     }}
                   >
                     <div style={{ fontWeight: 'bold', marginBottom: '10px' }}>{deck}</div>
@@ -228,11 +250,35 @@ export const DashboardPage: React.FC = () => {
                           🟡 {confinedCount} Confined Space
                         </span>
                       )}
+                      {radiographyCount > 0 && (
+                        <span style={{
+                          padding: '4px 8px',
+                          background: '#f3e5f5',
+                          color: '#7b1fa2',
+                          borderRadius: '4px',
+                          fontSize: '12px',
+                          fontWeight: 'bold'
+                        }}>
+                          🟣 {radiographyCount} Radiography
+                        </span>
+                      )}
+                      {electricalCount > 0 && (
+                        <span style={{
+                          padding: '4px 8px',
+                          background: '#e3f2fd',
+                          color: '#1976d2',
+                          borderRadius: '4px',
+                          fontSize: '12px',
+                          fontWeight: 'bold'
+                        }}>
+                          🔵 {electricalCount} Electrical
+                        </span>
+                      )}
                       {deckPermits.length === 0 && (
                         <span style={{ color: '#999', fontSize: '12px' }}>Không có PTW</span>
                       )}
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>
@@ -246,10 +292,15 @@ export const DashboardPage: React.FC = () => {
               }}>
                 <h4 style={{ margin: '0 0 10px 0' }}>PTW đang hoạt động tại {selectedDeck}</h4>
                 {activePermits.filter(p => p.deck === selectedDeck).map(permit => (
-                  <div
+                  <button
                     key={permit.id}
-                    onClick={() => setSelectedPermitForDetail(permit)}
+                    type="button"
+                    onClick={() => setSelectedPermitId(permit.id)}
                     style={{
+                      display: 'block',
+                      width: '100%',
+                      textAlign: 'left',
+                      font: 'inherit',
                       padding: '10px',
                       background: 'white',
                       borderRadius: '4px',
@@ -263,7 +314,7 @@ export const DashboardPage: React.FC = () => {
                     <div style={{ fontSize: '12px', color: '#999' }}>
                       Trạng thái: {STATUS_LABELS[permit.status]}
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
             )}
@@ -306,35 +357,54 @@ export const DashboardPage: React.FC = () => {
                       </td>
                       <td style={{ padding: '12px' }}>{permit.deck}</td>
                       <td style={{ padding: '12px', textAlign: 'center' }}>
-                        <button
-                          onClick={() => handleApproveClick(permit, 'APPROVE')}
-                          style={{
-                            marginRight: '8px',
-                            padding: '6px 12px',
-                            background: '#4caf50',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '4px',
-                            cursor: 'pointer',
-                            fontSize: '12px'
-                          }}
-                        >
-                          ✓ Phê duyệt
-                        </button>
-                        <button
-                          onClick={() => handleApproveClick(permit, 'REJECT')}
-                          style={{
-                            padding: '6px 12px',
-                            background: '#f44336',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '4px',
-                            cursor: 'pointer',
-                            fontSize: '12px'
-                          }}
-                        >
-                          ✗ Từ chối
-                        </button>
+                        {currentUser?.role === 'FPS' && permit.status === 'SUBMITTED' ? (
+                          <button
+                            onClick={() => handleApproveClick(permit, 'VERIFY')}
+                            style={{
+                              padding: '6px 12px',
+                              background: '#ff9800',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                              fontSize: '12px'
+                            }}
+                          >
+                            🔒 Xác nhận & Cô lập
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => handleApproveClick(permit, 'APPROVE')}
+                              style={{
+                                marginRight: '8px',
+                                padding: '6px 12px',
+                                background: '#4caf50',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                fontSize: '12px'
+                              }}
+                            >
+                              ✓ Phê duyệt
+                            </button>
+                            <button
+                              onClick={() => handleApproveClick(permit, 'REJECT')}
+                              style={{
+                                padding: '6px 12px',
+                                background: '#f44336',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                fontSize: '12px'
+                              }}
+                            >
+                              ✗ Từ chối
+                            </button>
+                          </>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -354,9 +424,10 @@ export const DashboardPage: React.FC = () => {
             <h3 style={{ marginTop: 0 }}>📋 Tất cả PTW ({permits.length})</h3>
             <div style={{ display: 'grid', gap: '10px' }}>
               {permits.slice().reverse().map((permit, idx) => (
-                <div
+                <button
                   key={permit.id}
-                  onClick={() => setSelectedPermitForDetail(permit)}
+                  type="button"
+                  onClick={() => setSelectedPermitId(permit.id)}
                   style={{
                     padding: '16px',
                     background: '#f5f5f5',
@@ -364,7 +435,11 @@ export const DashboardPage: React.FC = () => {
                     cursor: 'pointer',
                     display: 'flex',
                     justifyContent: 'space-between',
-                    alignItems: 'center'
+                    alignItems: 'center',
+                    width: '100%',
+                    textAlign: 'left',
+                    font: 'inherit',
+                    border: 'none'
                   }}
                 >
                   <div>
@@ -391,7 +466,7 @@ export const DashboardPage: React.FC = () => {
                       {new Date(permit.createdAt).toLocaleDateString('vi-VN')}
                     </div>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </div>
@@ -416,7 +491,7 @@ export const DashboardPage: React.FC = () => {
               }}>
                 <h3 style={{ margin: 0 }}>{selectedPermitForDetail.permitNumber}</h3>
                 <button
-                  onClick={() => setSelectedPermitForDetail(null)}
+                  onClick={() => setSelectedPermitId(null)}
                   style={{
                     background: 'transparent',
                     border: 'none',
@@ -524,12 +599,71 @@ export const DashboardPage: React.FC = () => {
                 <strong>Chữ ký số (QR Code)</strong>
                 <div style={{ marginTop: '10px' }}>
                   <QRCodeSVG
-                    value={`${selectedPermitForDetail.permitNumber}|${selectedPermitForDetail.status}|${selectedPermitForDetail.id}`}
+                    value={JSON.stringify(createPermitQrPayload(selectedPermitForDetail))}
                     size={100}
                   />
                 </div>
                 <div style={{ fontSize: '10px', color: '#999', marginTop: '8px' }}>
-                  Quét để xác thực PTW
+                  Quét để xác thực PTW (nội dung đã được ký, chống giả mạo)
+                </div>
+                <div style={{ marginTop: '12px', textAlign: 'left' }}>
+                  <label style={{ display: 'block', marginBottom: '6px', fontSize: '11px', fontWeight: 'bold' }}>
+                    Dán nội dung QR đã quét để xác thực
+                  </label>
+                  <textarea
+                    value={qrScanInput}
+                    onChange={(e) => { setQrScanInput(e.target.value); setQrScanResult(null); }}
+                    rows={3}
+                    style={{
+                      width: '100%',
+                      padding: '8px',
+                      borderRadius: '4px',
+                      border: '1px solid #ddd',
+                      fontSize: '11px',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      try {
+                        const payload = JSON.parse(qrScanInput) as PermitQrPayload;
+                        const isValid = verifyPermitQrPayload(payload, selectedPermitForDetail);
+                        setQrScanResult(isValid ? 'VALID' : 'INVALID');
+                      } catch {
+                        setQrScanResult('INVALID');
+                      }
+                    }}
+                    disabled={!qrScanInput}
+                    style={{
+                      marginTop: '8px',
+                      padding: '6px 12px',
+                      background: '#1a237e',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      fontSize: '12px',
+                      opacity: !qrScanInput ? 0.5 : 1
+                    }}
+                  >
+                    Xác thực chữ ký
+                  </button>
+                  {qrScanResult && (
+                    <div
+                      role="status"
+                      style={{
+                        marginTop: '8px',
+                        fontSize: '12px',
+                        fontWeight: 'bold',
+                        color: qrScanResult === 'VALID' ? '#2e7d32' : '#c62828'
+                      }}
+                    >
+                      {qrScanResult === 'VALID'
+                        ? '✓ Chữ ký hợp lệ, PTW xác thực.'
+                        : '✗ Chữ ký không hợp lệ hoặc PTW đã bị thay đổi.'}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -608,7 +742,8 @@ export const DashboardPage: React.FC = () => {
             width: '100%'
           }}>
             <h3 style={{ marginTop: 0 }}>
-              {approveAction === 'APPROVE' ? '✓ Phê duyệt PTW' : '✗ Từ chối PTW'}
+              {approveAction === 'APPROVE' ? '✓ Phê duyệt PTW' :
+               approveAction === 'VERIFY' ? '🔒 Xác nhận & Cô lập PTW' : '✗ Từ chối PTW'}
             </h3>
             <p><strong>{currentApprovePermit.permitNumber}</strong></p>
             <p>{currentApprovePermit.title}</p>

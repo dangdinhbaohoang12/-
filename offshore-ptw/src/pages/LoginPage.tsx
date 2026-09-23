@@ -1,18 +1,9 @@
 import React, { useState } from 'react';
-import { usePermitStore } from '../store/permitStore';
-import { User } from '../types';
+import { usePermitStore, DEMO_USERS } from '../store/permitStore';
 
 interface LoginProps {
   onLoginSuccess: () => void;
 }
-
-const DEMO_USERS: User[] = [
-  { id: '1', username: 'oim', fullName: 'Giàn Trưởng (OIM)', role: 'OIM', pinCode: '0001' },
-  { id: '2', username: 'deputy', fullName: 'Giàn Phó', role: 'DEPUTY_OIM', pinCode: '0002' },
-  { id: '3', username: 'fps', fullName: 'GS Sản Xuất (FPS)', role: 'FPS', pinCode: '0003' },
-  { id: '4', username: 'supervisor', fullName: 'GS Trực Tiếp', role: 'LINE_SUP', pinCode: '0004' },
-  { id: '5', username: 'worker', fullName: 'Nhân Viên', role: 'WORKER', pinCode: '0005' }
-];
 
 export const LoginPage: React.FC<LoginProps> = ({ onLoginSuccess }) => {
   const login = usePermitStore(state => state.login);
@@ -68,15 +59,19 @@ export const LoginPage: React.FC<LoginProps> = ({ onLoginSuccess }) => {
 
         <form onSubmit={handleSubmit}>
           <div style={{ marginBottom: '20px' }}>
-            <label style={{ 
-              display: 'block', 
-              marginBottom: '8px',
-              fontWeight: 'bold',
-              color: '#333'
-            }}>
+            <label
+              htmlFor="login-username"
+              style={{ 
+                display: 'block', 
+                marginBottom: '8px',
+                fontWeight: 'bold',
+                color: '#333'
+              }}
+            >
               Tên đăng nhập
             </label>
             <select
+              id="login-username"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               style={{
@@ -99,15 +94,19 @@ export const LoginPage: React.FC<LoginProps> = ({ onLoginSuccess }) => {
           </div>
 
           <div style={{ marginBottom: '20px' }}>
-            <label style={{ 
-              display: 'block', 
-              marginBottom: '8px',
-              fontWeight: 'bold',
-              color: '#333'
-            }}>
+            <label
+              htmlFor="login-pin"
+              style={{ 
+                display: 'block', 
+                marginBottom: '8px',
+                fontWeight: 'bold',
+                color: '#333'
+              }}
+            >
               Mã PIN
             </label>
             <input
+              id="login-pin"
               type="password"
               value={pinCode}
               onChange={(e) => setPinCode(e.target.value)}
@@ -126,14 +125,17 @@ export const LoginPage: React.FC<LoginProps> = ({ onLoginSuccess }) => {
           </div>
 
           {error && (
-            <div style={{
-              background: '#ffebee',
-              color: '#c62828',
-              padding: '10px',
-              borderRadius: '4px',
-              marginBottom: '20px',
-              fontSize: '14px'
-            }}>
+            <div
+              role="alert"
+              style={{
+                background: '#ffebee',
+                color: '#c62828',
+                padding: '10px',
+                borderRadius: '4px',
+                marginBottom: '20px',
+                fontSize: '14px'
+              }}
+            >
               {error}
             </div>
           )}

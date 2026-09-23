@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { usePermitStore } from '../store/permitStore';
 import { PermitType, JSAItem, Isolation } from '../types';
 import { v4 as uuidv4 } from 'uuid';
@@ -13,6 +13,57 @@ const PERMIT_TYPES: { value: PermitType; label: string }[] = [
 
 const DECKS = ['Upper Deck', 'Main Deck', 'Cellar Deck', 'Drill Floor'];
 
+/**
+ * Chuyển đổi một thời điểm (ISO hoặc Date) thành chuỗi giờ địa phương
+ * phù hợp với input datetime-local (yyyy-MM-ddTHH:mm), tránh lệch giờ UTC.
+ */
+function toLocalDateTimeInputValue(date: Date | string): string {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const year = d.getFullYear();
+  const month = pad(d.getMonth() + 1);
+  const day = pad(d.getDate());
+  const hours = pad(d.getHours());
+  const minutes = pad(d.getMinutes());
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function createDefaultFormData(): FormDataState {
+  return {
+    type: 'COLD_WORK' as PermitType,
+    title: '',
+    location: '',
+    locationTag: '',
+    deck: 'Main Deck',
+    startTime: toLocalDateTimeInputValue(new Date()),
+    endTime: toLocalDateTimeInputValue(new Date(Date.now() + 8 * 60 * 60 * 1000)),
+    workers: [] as string[],
+    ppe: [] as string[],
+    gasTestPassed: false,
+    electricalIsolated: false,
+    pressureIsolated: false,
+    jsaItems: [] as JSAItem[],
+    isolations: [] as Isolation[]
+  };
+}
+
+interface FormDataState {
+  type: PermitType;
+  title: string;
+  location: string;
+  locationTag: string;
+  deck: string;
+  startTime: string;
+  endTime: string;
+  workers: string[];
+  ppe: string[];
+  gasTestPassed: boolean;
+  electricalIsolated: boolean;
+  pressureIsolated: boolean;
+  jsaItems: JSAItem[];
+  isolations: Isolation[];
+}
+
 export const PermitFormPage: React.FC = () => {
   const createPermit = usePermitStore(state => state.createPermit);
   const updatePermit = usePermitStore(state => state.updatePermit);
@@ -22,22 +73,53 @@ export const PermitFormPage: React.FC = () => {
   const selectPermit = usePermitStore(state => state.selectPermit);
 
   const [activeTab, setActiveTab] = useState(0);
-  const [formData, setFormData] = useState({
-    type: 'COLD_WORK' as PermitType,
-    title: '',
-    location: '',
-    locationTag: '',
-    deck: 'Main Deck',
-    startTime: new Date().toISOString().slice(0, 16),
-    endTime: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 16),
-    workers: [] as string[],
-    ppe: [] as string[],
-    gasTestPassed: false,
-    electricalIsolated: false,
-    pressureIsolated: false,
-    jsaItems: [] as JSAItem[],
-    isolations: [] as Isolation[]
-  });
+  const [formData, setFormData] = useState<FormDataState>(() =>
+    selectedPermit
+      ? {
+          type: selectedPermit.type,
+          title: selectedPermit.title,
+          location: selectedPermit.location,
+          locationTag: selectedPermit.locationTag,
+          deck: selectedPermit.deck,
+          startTime: toLocalDateTimeInputValue(selectedPermit.startTime),
+          endTime: toLocalDateTimeInputValue(selectedPermit.endTime),
+          workers: selectedPermit.workers,
+          ppe: selectedPermit.ppe,
+          gasTestPassed: selectedPermit.gasTestPassed,
+          electricalIsolated: selectedPermit.electricalIsolated,
+          pressureIsolated: selectedPermit.pressureIsolated,
+          jsaItems: selectedPermit.jsaData,
+          isolations: selectedPermit.isolations
+        }
+      : createDefaultFormData()
+  );
+
+  // Nạp lại form khi permit đang chọn thay đổi (mở permit khác để sửa
+  // hoặc bắt đầu tạo mới sau khi selectedPermit được reset về null).
+  useEffect(() => {
+    if (selectedPermit) {
+      setFormData({
+        type: selectedPermit.type,
+        title: selectedPermit.title,
+        location: selectedPermit.location,
+        locationTag: selectedPermit.locationTag,
+        deck: selectedPermit.deck,
+        startTime: toLocalDateTimeInputValue(selectedPermit.startTime),
+        endTime: toLocalDateTimeInputValue(selectedPermit.endTime),
+        workers: selectedPermit.workers,
+        ppe: selectedPermit.ppe,
+        gasTestPassed: selectedPermit.gasTestPassed,
+        electricalIsolated: selectedPermit.electricalIsolated,
+        pressureIsolated: selectedPermit.pressureIsolated,
+        jsaItems: selectedPermit.jsaData,
+        isolations: selectedPermit.isolations
+      });
+    } else {
+      setFormData(createDefaultFormData());
+    }
+    setActiveTab(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPermit?.id]);
 
   const [newJsaItem, setNewJsaItem] = useState({ hazard: '', riskLevel: 'MEDIUM' as const, controlMeasure: '' });
   const [newIsolation, setNewIsolation] = useState({ equipmentTag: '', isolationType: 'VALVE' as const, lockNumber: '' });
@@ -71,10 +153,37 @@ export const PermitFormPage: React.FC = () => {
     }
   };
 
-  const handleSave = () => {
+  const validateDates = (): { startDate: Date; endDate: Date } | null => {
+    if (!formData.startTime || !formData.endTime) {
+      alert('Vui lòng nhập đầy đủ thời gian bắt đầu và kết thúc!');
+      return null;
+    }
+
+    const startDate = new Date(formData.startTime);
+    const endDate = new Date(formData.endTime);
+
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+      alert('Thời gian bắt đầu hoặc kết thúc không hợp lệ!');
+      return null;
+    }
+
+    if (endDate <= startDate) {
+      alert('Thời gian kết thúc phải sau thời gian bắt đầu!');
+      return null;
+    }
+
+    return { startDate, endDate };
+  };
+
+  const handleSave = (): boolean => {
     if (!formData.title || !formData.location) {
       alert('Vui lòng nhập tên công việc và vị trí!');
-      return;
+      return false;
+    }
+
+    const dates = validateDates();
+    if (!dates) {
+      return false;
     }
 
     const permitData = {
@@ -83,8 +192,8 @@ export const PermitFormPage: React.FC = () => {
       location: formData.location,
       locationTag: formData.locationTag,
       deck: formData.deck,
-      startTime: new Date(formData.startTime).toISOString(),
-      endTime: new Date(formData.endTime).toISOString(),
+      startTime: dates.startDate.toISOString(),
+      endTime: dates.endDate.toISOString(),
       workers: formData.workers,
       ppe: formData.ppe,
       jsaData: formData.jsaItems,
@@ -102,35 +211,31 @@ export const PermitFormPage: React.FC = () => {
       selectPermit(newPermit);
       alert('Đã tạo PTW thành công!');
     }
+    return true;
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = (pin: string) => {
     if (formData.jsaItems.length === 0) {
       alert('Bắt buộc phải có ít nhất 1 mục JSA!');
       setActiveTab(2);
       return;
     }
 
-    if (selectedPermit) {
-      // Cập nhật trước khi submit
-      handleSave();
-      setTimeout(() => {
-        if (selectedPermit) {
-          submitPermit(selectedPermit.id);
-          alert('Đã gửi PTW để phê duyệt!');
-        }
-      }, 100);
-    } else {
-      // Tạo mới và submit
-      handleSave();
-      setTimeout(() => {
-        const permits = usePermitStore.getState().permits;
-        const latestPermit = permits[permits.length - 1];
-        if (latestPermit) {
-          submitPermit(latestPermit.id);
-          alert('Đã gửi PTW để phê duyệt!');
-        }
-      }, 100);
+    if (!validateDates()) {
+      return;
+    }
+
+    const permitId = selectedPermit?.id;
+    if (!handleSave()) {
+      return;
+    }
+
+    const targetId = permitId || usePermitStore.getState().selectedPermit?.id;
+    if (targetId) {
+      const submitted = submitPermit(targetId, pin);
+      if (submitted) {
+        alert('Đã gửi PTW để phê duyệt!');
+      }
     }
   };
 
@@ -601,12 +706,13 @@ export const PermitFormPage: React.FC = () => {
               <button
                 onClick={() => {
                   if (pinCode === currentUser?.pinCode) {
+                    const pinToSubmit = pinCode;
                     setShowPinModal(false);
                     setPinCode('');
                     if (submitAction === 'SAVE') {
                       handleSave();
                     } else if (submitAction === 'SUBMIT') {
-                      handleSubmit();
+                      handleSubmit(pinToSubmit);
                     }
                   } else {
                     alert('PIN không đúng!');

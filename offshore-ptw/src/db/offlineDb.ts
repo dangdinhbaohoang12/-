@@ -1,4 +1,5 @@
 import Dexie, { Table } from 'dexie';
+import { v4 as uuidv4 } from 'uuid';
 import { Permit, User, SimOpsRule } from '../types';
 
 class OffshorePTWDatabase extends Dexie {
@@ -25,14 +26,27 @@ export const db = new OffshorePTWDatabase();
  * Lưu permit vào database offline
  */
 export async function savePermitOffline(permit: Permit): Promise<void> {
-  await db.permits.put(permit);
-  
-  // Thêm vào hàng đợi đồng bộ
-  await db.syncQueue.add({
-    id: `permit_${permit.id}_${Date.now()}`,
-    action: 'SAVE_PERMIT',
-    data: permit,
-    timestamp: new Date().toISOString()
+  await db.transaction('rw', db.permits, db.syncQueue, async () => {
+    await db.permits.put(permit);
+
+    // Loại bỏ các bản ghi SAVE_PERMIT chưa đồng bộ cũ của cùng permit này
+    // để tránh hàng đợi phình to vô hạn (chỉ giữ trạng thái mới nhất).
+    const stalePermitSaves = await db.syncQueue
+      .where('action')
+      .equals('SAVE_PERMIT')
+      .filter(item => item.data?.id === permit.id)
+      .toArray();
+    if (stalePermitSaves.length > 0) {
+      await db.syncQueue.bulkDelete(stalePermitSaves.map(item => item.id));
+    }
+
+    // Thêm vào hàng đợi đồng bộ
+    await db.syncQueue.add({
+      id: uuidv4(),
+      action: 'SAVE_PERMIT',
+      data: permit,
+      timestamp: new Date().toISOString()
+    });
   });
 }
 
@@ -83,7 +97,7 @@ export async function getUserByUsernameOffline(username: string): Promise<User |
  */
 export async function addToSyncQueue(action: string, data: any): Promise<void> {
   await db.syncQueue.add({
-    id: `${action}_${Date.now()}`,
+    id: uuidv4(),
     action,
     data,
     timestamp: new Date().toISOString()
@@ -94,7 +108,7 @@ export async function addToSyncQueue(action: string, data: any): Promise<void> {
  * Lấy các bản ghi cần đồng bộ
  */
 export async function getPendingSyncItems(): Promise<Array<{ id: string; action: string; data: any; timestamp: string }>> {
-  return await db.syncQueue.toArray();
+  return await db.syncQueue.orderBy('timestamp').toArray();
 }
 
 /**

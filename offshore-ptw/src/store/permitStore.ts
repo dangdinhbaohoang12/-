@@ -21,7 +21,7 @@ interface PermitState {
   createPermit: (data: Partial<Permit>) => Permit;
   updatePermit: (id: string, data: Partial<Permit>) => void;
   deletePermit: (id: string) => void;
-  submitPermit: (id: string) => void;
+  submitPermit: (id: string, pinCode: string) => boolean;
   approvePermit: (id: string, action: 'APPROVE' | 'REJECT', comment: string, pinCode: string) => boolean;
   verifyPermit: (id: string, pinCode: string) => boolean;
   closePermit: (id: string, pinCode: string) => boolean;
@@ -37,7 +37,7 @@ interface PermitState {
 }
 
 // Users mẫu cho demo
-const DEMO_USERS: User[] = [
+export const DEMO_USERS: User[] = [
   { id: '1', username: 'oim', fullName: 'Giàn Trưởng (OIM)', role: 'OIM', pinCode: '0001' },
   { id: '2', username: 'deputy', fullName: 'Giàn Phó', role: 'DEPUTY_OIM', pinCode: '0002' },
   { id: '3', username: 'fps', fullName: 'GS Sản Xuất (FPS)', role: 'FPS', pinCode: '0003' },
@@ -130,10 +130,16 @@ export const usePermitStore = create<PermitState>()(
         set({ permits: state.permits.filter(p => p.id !== id) });
       },
 
-      submitPermit: (id: string) => {
+      submitPermit: (id: string, pinCode: string) => {
         const state = get();
+        const user = state.currentUser;
         const permit = state.permits.find(p => p.id === id);
-        if (!permit) return;
+        if (!user || !permit) return false;
+
+        if (user.pinCode !== pinCode) {
+          alert('PIN không đúng!');
+          return false;
+        }
 
         // Kiểm tra SIMOPS trước khi submit
         const conflicts = checkSimOpsForPermit(permit, state.permits);
@@ -141,15 +147,38 @@ export const usePermitStore = create<PermitState>()(
         
         if (hasBlockConflict) {
           alert('Không thể submit do có xung đột SIMOPS nghiêm trọng!');
-          return;
+          return false;
         }
+
+        const signature = createDigitalSignature(
+          `${permit.id}:SUBMIT`,
+          pinCode,
+          user.id
+        );
+
+        const approval: PermitApproval = {
+          id: uuidv4(),
+          permitId: permit.id,
+          approverId: user.id,
+          approverRole: user.role,
+          action: 'SUBMIT',
+          signatureHash: signature.hash,
+          timestamp: new Date().toISOString()
+        };
 
         set({ 
           permits: state.permits.map(p => 
-            p.id === id ? { ...p, status: 'SUBMITTED', updatedAt: new Date().toISOString() } : p
+            p.id === id ? {
+              ...p,
+              status: 'SUBMITTED',
+              approvals: [...p.approvals, approval],
+              updatedAt: new Date().toISOString()
+            } : p
           ),
           simopsConflicts: conflicts
         });
+
+        return true;
       },
 
       approvePermit: (id: string, action: 'APPROVE' | 'REJECT', comment: string, pinCode: string) => {

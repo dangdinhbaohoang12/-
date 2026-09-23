@@ -7,6 +7,7 @@ import { usePermitStore } from './store/permitStore';
 function App() {
   const currentUser = usePermitStore(state => state.currentUser);
   const logout = usePermitStore(state => state.logout);
+  const selectPermit = usePermitStore(state => state.selectPermit);
   const [currentPage, setCurrentPage] = useState<'dashboard' | 'create' | 'list'>('dashboard');
 
   if (!currentUser) {
@@ -45,7 +46,10 @@ function App() {
             </button>
             {canCreatePermit && (
               <button
-                onClick={() => setCurrentPage('create')}
+                onClick={() => {
+                  selectPermit(null);
+                  setCurrentPage('create');
+                }}
                 style={{
                   padding: '8px 16px',
                   background: currentPage === 'create' ? 'rgba(255,255,255,0.2)' : 'transparent',
@@ -65,7 +69,10 @@ function App() {
             {currentUser.fullName} ({currentUser.role})
           </span>
           <button
-            onClick={logout}
+            onClick={() => {
+              logout();
+              setCurrentPage('dashboard');
+            }}
             style={{
               padding: '8px 16px',
               background: 'rgba(255,255,255,0.2)',
@@ -82,8 +89,11 @@ function App() {
 
       {/* Main Content */}
       <main>
-        {currentPage === 'dashboard' && <DashboardPage />}
-        {currentPage === 'create' && <PermitFormPage />}
+        {currentPage === 'create' && canCreatePermit ? (
+          <PermitFormPage />
+        ) : (
+          <DashboardPage />
+        )}
       </main>
     </div>
   );
