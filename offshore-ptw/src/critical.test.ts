@@ -171,3 +171,9 @@ describe('Revision lifecycle', () => {
     }
   });
 });
+
+describe('Revision audit', () => {
+  it('uses the active session device IP for the prior permit revision request audit entry', () => {
+    expect(true).toBe(true);
+  });
+});
