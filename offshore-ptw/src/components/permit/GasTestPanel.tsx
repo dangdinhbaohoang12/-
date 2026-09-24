@@ -49,7 +49,7 @@ export function GasTestPanel({ permit }: { permit: Permit }) {
   const allFilled = PARAMS.every((p) => readings[p].trim() !== '');
   const draftAllPass = PARAMS.every((p) => liveResult(p, readings[p]) === 'PASS');
 
-  const submit = () => {
+  const submit = async () => {
     setError(null);
     if (!currentUser) return;
     if (!detectorId.trim() || !calDue || !location.trim()) {
@@ -62,7 +62,7 @@ export function GasTestPanel({ permit }: { permit: Permit }) {
       setError('Máy dò đã hết hạn hiệu chuẩn – phép đo không có giá trị pháp lý.');
       return;
     }
-    const res = addGasTest(
+    const res = await addGasTest(
       permit.id,
       {
         readings: PARAMS.map((p) => ({
