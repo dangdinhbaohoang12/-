@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # Tự động cập nhật các thư viện Node.js hàng tuần
+  - package-ecosystem: "pnpm"
+    directory: "/"
+    schedule:
+      interval: "daily"
+
+  # Tự động cập nhật các extension của GitHub Actions hàng tuần
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "daily"
