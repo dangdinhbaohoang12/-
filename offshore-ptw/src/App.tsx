@@ -1,102 +1,43 @@
-import React, { useState } from 'react';
+/**
+ * ============================================================================
+ * APP ROOT – Protected router của hệ thống OFFSHORE PTW
+ * ==========================================================================*/
+
+import { Navigate, Route, Routes } from 'react-router-dom';
+import { usePtwStore } from './store/ptwStore';
+import { AppLayout } from './components/layout/AppLayout';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { PermitListPage } from './pages/PermitListPage';
 import { PermitFormPage } from './pages/PermitFormPage';
-import { usePermitStore } from './store/permitStore';
+import { PermitDetailPage } from './pages/PermitDetailPage';
+import { UsersAdminPage } from './pages/UsersAdminPage';
 
-function App() {
-  const currentUser = usePermitStore(state => state.currentUser);
-  const logout = usePermitStore(state => state.logout);
-  const selectPermit = usePermitStore(state => state.selectPermit);
-  const [currentPage, setCurrentPage] = useState<'dashboard' | 'create' | 'list'>('dashboard');
-
-  if (!currentUser) {
-    return <LoginPage onLoginSuccess={() => {}} />;
-  }
-
-  const canCreatePermit = ['LINE_SUP', 'FPS', 'DEPUTY_OIM', 'OIM'].includes(currentUser.role);
-
-  return (
-    <div style={{ minHeight: '100vh', background: '#f5f5f5' }}>
-      {/* Navigation Bar */}
-      <nav style={{
-        background: '#1a237e',
-        color: 'white',
-        padding: '0 20px',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        height: '60px'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-          <div style={{ fontWeight: 'bold', fontSize: '20px' }}>🛢️ OFFSHORE PTW</div>
-          <div style={{ display: 'flex', gap: '10px' }}>
-            <button
-              onClick={() => setCurrentPage('dashboard')}
-              style={{
-                padding: '8px 16px',
-                background: currentPage === 'dashboard' ? 'rgba(255,255,255,0.2)' : 'transparent',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer'
-              }}
-            >
-              📊 Dashboard
-            </button>
-            {canCreatePermit && (
-              <button
-                onClick={() => {
-                  selectPermit(null);
-                  setCurrentPage('create');
-                }}
-                style={{
-                  padding: '8px 16px',
-                  background: currentPage === 'create' ? 'rgba(255,255,255,0.2)' : 'transparent',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer'
-                }}
-              >
-                ➕ Tạo PTW
-              </button>
-            )}
-          </div>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-          <span style={{ fontSize: '14px' }}>
-            {currentUser.fullName} ({currentUser.role})
-          </span>
-          <button
-            onClick={() => {
-              logout();
-              setCurrentPage('dashboard');
-            }}
-            style={{
-              padding: '8px 16px',
-              background: 'rgba(255,255,255,0.2)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer'
-            }}
-          >
-            Đăng xuất
-          </button>
-        </div>
-      </nav>
-
-      {/* Main Content */}
-      <main>
-        {currentPage === 'create' && canCreatePermit ? (
-          <PermitFormPage />
-        ) : (
-          <DashboardPage />
-        )}
-      </main>
-    </div>
-  );
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  const currentUser = usePtwStore((s) => s.currentUser);
+  if (!currentUser) return <Navigate to="/login" replace />;
+  return <>{children}</>;
 }
 
-export default App;
+function RequireOim({ children }: { children: React.ReactNode }) {
+  const currentUser = usePtwStore((s) => s.currentUser);
+  if (!currentUser) return <Navigate to="/login" replace />;
+  if (currentUser.role !== 'OIM') return <UsersAdminPage />; // trang tự hiển thị cảnh báo cấm
+  return <>{children}</>;
+}
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
+        <Route index element={<DashboardPage />} />
+        <Route path="permits" element={<PermitListPage />} />
+        <Route path="permits/new" element={<PermitFormPage />} />
+        <Route path="permits/:id" element={<PermitDetailPage />} />
+        <Route path="users" element={<RequireOim><UsersAdminPage /></RequireOim>} />
+      </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}

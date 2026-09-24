@@ -1,36 +1,33 @@
-# Dependencies
+# Node.js / npm
 node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
 # Build outputs
 dist/
 build/
-target/
-
-# TypeScript/JavaScript
+out/
+.vite/
 *.tsbuildinfo
-*.js.map
-*.jsx.map
-*.ts.map
 
 # Environment variables
 .env
 .env.local
-.env.*
-!.env.example
+.env.development.local
+.env.test.local
+.env.production.local
 
-# IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
 
-# OS generated files
+# OS files
 .DS_Store
 Thumbs.db
-
-# Logs
-*.log
-
-# Coverage
-coverage/
-.nyc_output/
