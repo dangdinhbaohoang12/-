@@ -898,7 +898,7 @@ export const usePtwStore = create<PtwState>()(
               userRole: actor.role,
               action: `Yêu cầu Revision → ${permit.permitNumber} Rev ${nextRevisionNo}`,
               comment: reason.trim(),
-              deviceIp: DEFAULT_IP,
+              deviceIp: state.sessionDeviceIp ?? DEFAULT_IP,
               timestamp: nowIso(),
             }),
           ],
