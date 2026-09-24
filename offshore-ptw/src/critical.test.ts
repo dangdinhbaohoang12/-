@@ -5,7 +5,6 @@ import { computeOverallResult, hasAllRequiredParameters, hasValidGasTest } from 
 import { detectSimopsConflicts } from './engine/simopsEngine';
 import { approveAtCurrentLevel } from './engine/workflowStateMachine';
 import { hashPin } from './data/catalog';
-import { usePtwStore } from './store/ptwStore';
 import type { Permit, UserAccount } from './types/domain';
 
 const permit=(o:Partial<Permit>={}):Permit=>({
@@ -169,11 +168,5 @@ describe('Revision lifecycle', () => {
     } finally {
       usePtwStore.setState({ permits: [], currentUser: null });
     }
-  });
-});
-
-describe('Revision audit', () => {
-  it('uses the active session device IP for the prior permit revision request audit entry', () => {
-    expect(true).toBe(true);
   });
 });
