@@ -112,10 +112,13 @@ export function PermitDetailPage() {
   const approverOf = (userId?: string) => users.find((u) => u.id === userId);
 
   const runAction = async (pin: string, comment: string): Promise<{ ok: boolean; error?: string }> => {
-    if (!signoff) return { ok: false, error: 'Không có hành động nào đang chờ ký.' };
-    const res = await perform(signoff.action, { id: permit.id }, pin, comment);
+    const active = signoff;
+    if (!active) return { ok: false, error: 'Không có hành động nào đang chờ ký.' };
+    const res = await perform(active.action, { id: permit.id }, pin, comment);
     if (!res.ok) return { ok: false, error: res.error };
-    setSignoff(null);
+    // Only clear the signoff that was actually submitted – a newer pending
+    // action may have been opened in the meantime and must stay visible.
+    setSignoff((current) => (current === active ? null : current));
     return { ok: true };
   };
 
@@ -272,21 +275,29 @@ function SignoffModal({ pending, onClose, onConfirm, permitNumber }: {
     }
   };
 
+  // While a sign-off request is in flight, block every close path (backdrop,
+  // Escape, ✕ button, Hủy) so the pending action cannot be dismissed and
+  // replaced by another one before it settles.
+  const guardedClose = () => {
+    if (submitting) return;
+    onClose();
+  };
+
   return (
-    <Modal open={!!pending} onClose={onClose} title={pending?.label ?? ''} subtitle={`${permitNumber} · Xác thực chữ ký điện tử`}>
+    <Modal open={!!pending} onClose={guardedClose} title={pending?.label ?? ''} subtitle={`${permitNumber} · Xác thực chữ ký điện tử`}>
       <div className="space-y-4">
         <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs">
           Người ký: <b>{currentUser?.fullName}</b> · {currentUser ? ROLE_LABELS_VI[currentUser.role] : ''} · Chứng chỉ <span className="font-mono">{currentUser?.certificationNumber}</span>
         </div>
         <FieldRow label="Mã PIN điện tử (bắt buộc)" hint="Chữ ký SHA-256 được tạo từ username + vai trò + timestamp + PIN">
-          <input type="password" autoFocus maxLength={8} inputMode="numeric" className={inputClass} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} />
+          <input type="password" autoFocus maxLength={8} inputMode="numeric" className={inputClass} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} disabled={submitting} />
         </FieldRow>
         <FieldRow label={needsComment ? 'Lý do / bình luận (BẮT BUỘC)' : 'Bình luận (tùy chọn)'}>
-          <textarea rows={3} className={inputClass} value={comment} onChange={(e) => setComment(e.target.value)} />
+          <textarea rows={3} className={inputClass} value={comment} onChange={(e) => setComment(e.target.value)} disabled={submitting} />
         </FieldRow>
         {error && <p className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">⛔ {error}</p>}
         <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose} disabled={submitting}>Hủy</Button>
+          <Button variant="ghost" onClick={guardedClose} disabled={submitting}>Hủy</Button>
           <Button variant={pending?.tone === 'danger' || pending?.tone === 'critical' ? 'danger' : 'success'} onClick={confirm} disabled={!pin || submitting}>{submitting ? 'Đang xử lý…' : '🖊 Ký & xác nhận'}</Button>
         </div>
       </div>

@@ -736,6 +736,7 @@ async function createDraft(user: any, body: any, req: AnyRequest): Promise<strin
 
   const data = body.data ?? {};
   if (!String(data.workDescription ?? '').trim()) badRequest('Mô tả công việc là bắt buộc.');
+  if (!String(data.reasonForIssuing ?? '').trim()) badRequest('Lý do phát hành là bắt buộc.');
   if (!data.areaId) badRequest('Khu vực (Area) là bắt buộc.');
   if (!data.plannedStart || !data.plannedEnd) badRequest('Thời gian bắt đầu/kết thúc dự kiến là bắt buộc.');
 
@@ -748,6 +749,12 @@ async function createDraft(user: any, body: any, req: AnyRequest): Promise<strin
   const area = AREAS.find((item) => item.id === data.areaId);
   if (!area) badRequest('Khu vực không tồn tại trong danh mục giàn.');
   if (data.platformCode && data.platformCode !== area.platformCode) badRequest('Khu vực không thuộc đúng giàn đã chọn.');
+  if (
+    (user.role === 'LINE_SUPERVISOR' || user.role === 'PERMIT_APPLICANT') &&
+    area.platformCode !== user.platform_code
+  ) {
+    badRequest('Tài khoản của bạn chỉ được tạo permit trong phạm vi giàn được cấp phép.');
+  }
   if (data.equipmentTag && data.equipmentTag !== 'N/A') {
     const equipment = EQUIPMENT.find((item) => item.tag === data.equipmentTag);
     if (!equipment || equipment.areaId !== area.id) badRequest('Thiết bị không thuộc khu vực đã chọn.');
@@ -1440,6 +1447,7 @@ async function changeUserPin(user: any, body: any): Promise<void> {
   ensurePermission(user.role as Role, 'MANAGE_USERS');
   await ensurePin(user, String(body.operatorPin ?? ''));
   const userId = String(body.userId ?? '');
+  if (userId === user.id) badRequest('Không thể cấp lại PIN cho chính tài khoản đang đăng nhập – dùng chức năng tự đổi PIN để phiên được gia hạn đúng cách.');
   const newPin = String(body.newPin ?? '');
   if (!validPin(newPin)) badRequest('PIN mới phải là 4–8 chữ số.');
   const target = await getUserById(userId);

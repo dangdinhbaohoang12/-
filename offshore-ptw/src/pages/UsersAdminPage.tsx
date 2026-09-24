@@ -67,11 +67,21 @@ export function UsersAdminPage() {
 
   const savePin = async () => {
     if (!pinTarget || savingPin) return;
+    // Capture the target being submitted so cleanup only touches this
+    // request's modal – not a different one the operator opened afterwards.
+    const target = pinTarget;
     setSavingPin(true);
     try {
-      const res = await changePin(pinTarget.id, newPin, operatorPin);
-      setMsg(res.ok ? { ok: true, text: `Đã cập nhật PIN cho ${pinTarget.username}.` } : { ok: false, text: res.error ?? 'Lỗi.' });
-      if (res.ok) { setPinTarget(null); setNewPin(''); }
+      const res = await changePin(target.id, newPin, operatorPin);
+      setMsg(res.ok ? { ok: true, text: `Đã cập nhật PIN cho ${target.username}.` } : { ok: false, text: res.error ?? 'Lỗi.' });
+      if (res.ok) {
+        let stillSameTarget = false;
+        setPinTarget((current) => {
+          stillSameTarget = current?.id === target.id;
+          return stillSameTarget ? null : current;
+        });
+        if (stillSameTarget) setNewPin('');
+      }
     } finally {
       setSavingPin(false);
     }
@@ -131,7 +141,15 @@ export function UsersAdminPage() {
                     <td className="py-2.5 pr-3">{u.active ? <Badge tone="info">Hoạt động</Badge> : <Badge tone="danger">Khóa</Badge>}</td>
                     <td className="py-2.5">
                       <div className="flex gap-1.5">
-                        <Button size="sm" variant="outline" onClick={() => setPinTarget(u)} disabled={togglingUserId === u.id}>Đổi PIN</Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setPinTarget(u)}
+                          disabled={togglingUserId === u.id || u.id === currentUser.id}
+                          title={u.id === currentUser.id ? 'Không thể cấp lại PIN cho chính tài khoản đang đăng nhập — phiên sẽ bị vô hiệu ngay lập tức. Hãy dùng chức năng tự đổi PIN.' : undefined}
+                        >
+                          Đổi PIN
+                        </Button>
                         <Button size="sm" variant={u.active ? 'danger' : 'success'} disabled={u.id === currentUser.id || togglingUserId === u.id} onClick={() => toggleActive(u)}>
                           {togglingUserId === u.id ? 'Đang xử lý…' : u.active ? 'Khóa' : 'Mở khóa'}
                         </Button>
@@ -146,7 +164,7 @@ export function UsersAdminPage() {
       </div>
 
       {pinTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setPinTarget(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => { if (!savingPin) setPinTarget(null); }}>
           <div className="ptw-modal-in w-full max-w-sm rounded-2xl border border-border bg-card p-5" onClick={(e) => e.stopPropagation()}>
             <p className="mb-3 text-sm font-bold">Cấp lại PIN cho @{pinTarget.username}</p>
             <input type="password" inputMode="numeric" maxLength={8} autoFocus className={inputClass} value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))} placeholder="PIN mới 4–8 chữ số" disabled={savingPin} />
