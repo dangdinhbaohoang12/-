@@ -73,16 +73,34 @@ interface PtwState {
       initialPin: string;
       email?: string;
       phone?: string;
+      organization?: string;
+      certificationNumber?: string;
     },
     operatorPin: string
-  ) => ActionResult;
+  ) => ActionResult & { user?: UserAccount };
+  /** Alias giữ tương thích UI. */
+  createUser: PtwState['createUserAccount'];
   toggleUserActive: (userId: string, active: boolean, operatorPin: string) => ActionResult;
+  /** OIM cấp lại PIN cho tài khoản khác (bắt buộc PIN của chính OIM xác thực). */
+  changePin: (userId: string, newPin: string, operatorPin: string) => ActionResult;
 
   // === Permit lifecycle ===
+  /**
+   * Tạo bản nháp PTW. CHỮ KÝ SỐ BẮT BUỘC: operatorPin phải đúng PIN của tài
+   * khoản đăng nhập (enforce ở store, không phụ thuộc UI). Nhận thêm các alias
+   * hiển thị (riskLevelAssessed/areaCode/platformCode/checklist) để UI gọn.
+   */
   createDraftPermit: (
-    data: Partial<Pick<Permit, 'permitType' | 'riskLevel' | 'areaId' | 'equipmentTag' | 'workDescription' | 'contractorCompany' | 'companyDepartment' | 'supervisorUserId' | 'supervisorName' | 'workOrderNo' | 'priority' | 'plannedStart' | 'plannedEnd' | 'criticalWork'>> ,
+    data: Partial<Pick<Permit, 'permitType' | 'riskLevel' | 'areaId' | 'equipmentTag' | 'workDescription' | 'reasonForIssuing' | 'contractorCompany' | 'companyDepartment' | 'supervisorUserId' | 'supervisorName' | 'workOrderNo' | 'priority' | 'plannedStart' | 'plannedEnd' | 'criticalWork'>> & {
+      riskLevelAssessed?: RiskLevel;
+      areaCode?: string;
+      platformCode?: string;
+      safetyChecklistConfirmed?: Array<{ itemId: string; labelVi: string; confirmed: boolean }>;
+    },
     operatorPin: string
-  ) => ActionResult & { permitNumber?: string };
+  ) => ActionResult & { permitNumber?: string; permit?: Permit };
+  /** Alias giữ tương thích UI (cùng chữ ký với createDraftPermit). */
+  createDraft: PtwState['createDraftPermit'];
   updateDraftPermit: (permitId: string, patch: Partial<Permit>) => ActionResult;
   runTransition: (
     permitId: string,
@@ -97,6 +115,27 @@ interface PtwState {
       | 'COMPLETE_WORK'
       | 'CLOSE'
       | 'CANCEL',
+    pin: string,
+    comment?: string
+  ) => ActionResult;
+  /** Facade cho UI Sign-off: map hành động ngữ nghĩa → runTransition/requestRevision. */
+  perform: (
+    action:
+      | 'SUBMIT'
+      | 'APPROVE_LINE_SUPERVISOR'
+      | 'APPROVE_FPS'
+      | 'APPROVE_DEPUTY_OIM'
+      | 'APPROVE_OIM'
+      | 'REJECT'
+      | 'RETURN_FOR_CLARIFICATION'
+      | 'START_WORK'
+      | 'SUSPEND'
+      | 'RESUME'
+      | 'COMPLETE_WORK'
+      | 'CLOSE'
+      | 'CANCEL'
+      | 'CREATE_REVISION',
+    target: { id: string },
     pin: string,
     comment?: string
   ) => ActionResult;
@@ -304,6 +343,8 @@ export const usePtwStore = create<PtwState>()(
           platformCode: input.platformCode,
           email: input.email,
           phone: input.phone,
+          organization: input.organization,
+          certificationNumber: input.certificationNumber,
           pinHash: hashPin(input.initialPin),
           active: true,
           mustChangePin: true,
@@ -311,6 +352,26 @@ export const usePtwStore = create<PtwState>()(
           createdByUserId: actor.id,
         };
         set({ users: [...state.users, created] });
+        return { ok: true, user: created };
+      },
+
+      createUser: (input, operatorPin) => get().createUserAccount(input, operatorPin),
+
+      changePin: (userId, newPin, operatorPin) => {
+        const state = get();
+        const actor = state.currentUser;
+        if (!actor) return { ok: false, error: 'Phiên làm việc chưa xác thực.' };
+        const perm = checkPermission(actor.role, 'MANAGE_USERS');
+        if (!perm.allowed) return { ok: false, error: perm.reason };
+        if (!verifyPin(actor, operatorPin)) return { ok: false, error: 'PIN xác thực của Giàn trưởng không đúng.' };
+        if (!/^\d{4,8}$/.test(newPin)) return { ok: false, error: 'PIN mới phải là 4–8 chữ số.' };
+        const target = state.users.find((u) => u.id === userId);
+        if (!target) return { ok: false, error: 'Không tìm thấy tài khoản đích.' };
+        set({
+          users: state.users.map((u) =>
+            u.id === userId ? { ...u, pinHash: hashPin(newPin), mustChangePin: true } : u
+          ),
+        });
         return { ok: true };
       },
 

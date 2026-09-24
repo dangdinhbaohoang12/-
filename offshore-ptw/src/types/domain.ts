@@ -354,6 +354,8 @@ export interface Permit {
   permitNumber: string;
   revisionNo: number;
   parentPermitId?: string;
+  /** Liên kết Rev trước (id của permit bản cũ khi tạo Revision). */
+  previousRevisionOfPermitId?: string;
   revisionReason?: string;
 
   platformCode: string;
@@ -367,11 +369,15 @@ export interface Permit {
   areaName: string;
   equipmentTag: string;
   workDescription: string;
+  /** Lý do phát sinh công việc (bắt buộc khi khởi tạo PTW). */
+  reasonForIssuing?: string;
 
   contractorCompany: string;
   companyDepartment: string;
   applicantUserId: string;
   applicantName: string;
+  /** Vai trò lúc khởi tạo – phục vụ hiển thị hồ sơ. */
+  applicantRole?: Role;
   supervisorUserId: string;
   supervisorName: string;
 
@@ -381,6 +387,14 @@ export interface Permit {
   plannedEnd: string;
   actualStart?: string;
   actualEnd?: string;
+  /** Thời điểm OIM phát hành permit (chuyển sang APPROVED). */
+  approvedAt?: string;
+  /** Mốc hết hiệu lực = plannedEnd (trùng khớp đồng bộ khi Re-approve). */
+  validUntil?: string;
+  /** Lý do đình chỉ gần nhất. */
+  suspensionReason?: string;
+  /** Ghi chú đóng permit. */
+  closureNotes?: string;
 
   status: PermitStatus;
   currentApprovalLevel: ApprovalLevel | null;
@@ -411,6 +425,10 @@ export interface UserAccount {
   fullName: string;
   role: Role;
   platformCode: string;
+  /** Đơn vị công tác (tổ/room). */
+  organization?: string;
+  /** Số chứng chỉ an toàn hiển thị cạnh chữ ký số. */
+  certificationNumber?: string;
   email?: string;
   phone?: string;
   /** SHA-256 hex của PIN – hệ thống không bao giờ lưu PIN dạng thuần. */
@@ -421,6 +439,9 @@ export interface UserAccount {
   createdByUserId: string;
   lastLoginAt?: string;
 }
+
+/** Alias tương thích tên gọi trong tài liệu đặc tả. */
+export type User = UserAccount;
 
 /* ---------------------------------------------------------------------------
  * 6. THÔNG BÁO

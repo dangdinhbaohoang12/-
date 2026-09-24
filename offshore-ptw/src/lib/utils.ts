@@ -28,3 +28,12 @@ export function formatDate(iso: string | undefined | null): string {
 export function minutesUntil(iso: string, now: Date = new Date()): number {
   return Math.round((new Date(iso).getTime() - now.getTime()) / 60000);
 }
+
+/** Chuyển ISO string sang giá trị cho <input type="datetime-local"> (giờ máy cục bộ). */
+export function toLocalInputValue(iso: string | undefined | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}

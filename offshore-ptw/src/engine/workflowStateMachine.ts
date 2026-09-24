@@ -222,6 +222,8 @@ export function approveAtCurrentLevel(permit: Permit, ctx: TransitionContext): T
     }
     next.currentApprovalLevel = null;
     next.status = 'APPROVED';
+    next.approvedAt = (ctx.now ?? new Date()).toISOString();
+    next.validUntil = next.plannedEnd;
     next.statusHistory.push(
       historyEntry(next.statusHistory.length, permit.status, 'APPROVED', 'ISSUED', ctx, 'Hoàn tất chuỗi duyệt – phát hành permit')
     );
@@ -308,6 +310,7 @@ export function suspendPermit(permit: Permit, ctx: TransitionContext): Transitio
   const next: Permit = {
     ...permit,
     status: 'SUSPENDED',
+    suspensionReason: ctx.comment ?? 'Không nêu lý do',
     updatedAt: (ctx.now ?? new Date()).toISOString(),
     statusHistory: [
       ...permit.statusHistory,
@@ -367,6 +370,7 @@ export function closePermit(permit: Permit, ctx: TransitionContext): TransitionR
   const next: Permit = {
     ...permit,
     status: 'CLOSED',
+    closureNotes: ctx.comment ?? 'Đóng permit theo quy trình',
     updatedAt: (ctx.now ?? new Date()).toISOString(),
     statusHistory: [
       ...permit.statusHistory,

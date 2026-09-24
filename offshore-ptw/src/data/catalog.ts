@@ -209,3 +209,19 @@ export function findAccountByUsername(username: string): UserAccount | undefined
   const u = username.trim().toLowerCase();
   return SYSTEM_ACCOUNTS.find((a) => a.username.toLowerCase() === u);
 }
+
+/* ---------------------- TRA CỨU PHỤC VỤ FORM / HỒ SƠ --------------------- */
+
+/** Danh mục thiết bị nhóm theo MÃ KHU VỰC (area.code) – dùng cho Permit Form. */
+export const EQUIPMENT_BY_AREA: Record<string, EquipmentItem[]> = (() => {
+  const map: Record<string, EquipmentItem[]> = {};
+  for (const area of AREAS) {
+    const list = EQUIPMENT.filter((e) => e.areaId === area.id);
+    if (list.length > 0) map[area.code] = list;
+  }
+  return map;
+})();
+
+/** Bản đồ loại permit theo code – tiện tra cứu O(1) trong UI. */
+export const PERMIT_TYPE_CATALOG_MAP: Record<PermitTypeCode, PermitTypeMeta> =
+  Object.fromEntries(PERMIT_TYPE_CATALOG.map((t) => [t.code, t])) as Record<PermitTypeCode, PermitTypeMeta>;

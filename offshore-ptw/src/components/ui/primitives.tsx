@@ -69,6 +69,15 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
   size?: ButtonSize;
 }
 
+/** Alias để các trang dùng tone ngữ nghĩa ('critical' → danger nhấn mạnh). */
+export type { ButtonVariant };
+export type ActionTone = ButtonVariant | 'critical';
+
+/** Map tone hành động → variant Button hợp lệ. */
+export function toButtonVariant(tone: ActionTone): ButtonVariant {
+  return tone === 'critical' ? 'danger' : tone;
+}
+
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant = 'primary', size = 'md', type = 'button', ...props }, ref) => (
     <button
@@ -133,6 +142,39 @@ export function Badge({
 
 /* ------------------------------- Form fields ------------------------------ */
 
+export const inputClass = cn(
+  'w-full h-9 rounded-lg border border-input bg-input/40 px-3 text-sm text-foreground',
+  'placeholder:text-muted-foreground/50 transition-colors',
+  'focus:outline-none focus:ring-2 focus:ring-ring/60 focus:border-ring/60',
+  'read-only:cursor-default read-only:opacity-90 disabled:opacity-40'
+);
+
+/** Select style Tailwind – onChange trả về value trực tiếp cho gọn code trang. */
+export function Select({
+  value,
+  onChange,
+  children,
+  className,
+  disabled,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  children: React.ReactNode;
+  className?: string;
+  disabled?: boolean;
+}) {
+  return (
+    <select
+      value={value}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value)}
+      className={cn(inputClass, 'appearance-none pr-8', className)}
+    >
+      {children}
+    </select>
+  );
+}
+
 export function Label({ className, ...props }: React.LabelHTMLAttributes<HTMLLabelElement>) {
   return (
     <label
@@ -141,13 +183,6 @@ export function Label({ className, ...props }: React.LabelHTMLAttributes<HTMLLab
     />
   );
 }
-
-export const inputClass = cn(
-  'w-full h-9 rounded-lg border border-input bg-input/40 px-3 text-sm text-foreground',
-  'placeholder:text-muted-foreground/50 transition-colors',
-  'focus:outline-none focus:ring-2 focus:ring-ring/60 focus:border-ring/60',
-  'read-only:cursor-default read-only:opacity-90 disabled:opacity-40'
-);
 
 export function FieldRow({
   label,
