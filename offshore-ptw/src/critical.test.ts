@@ -84,7 +84,7 @@ describe('Revision lifecycle', () => {
         status: 'APPROVED', riskLevel: 'HIGH', validUntil: '2026-09-24T22:00:00.000Z',
         plannedEnd: '2026-09-25T10:00:00.000Z',
       });
-      usePtwStore.setState({ permits: [issued], currentUser: oim });
+      usePtwStore.setState({ permits: [issued], currentUser: oim, sessionDeviceIp: '192.0.2.10' });
 
       const request = usePtwStore.getState().requestRevision(issued.id, 'Change scope', '1234');
       expect(request.ok).toBe(true);
@@ -95,7 +95,10 @@ describe('Revision lifecycle', () => {
       expect(original.updatedAt).toBe(issued.updatedAt);
       expect(original.revisions).toHaveLength(1);
       expect(original.statusHistory.at(-1)).toMatchObject({
-        eventType: 'REVISION_REQUESTED', fromStatus: 'APPROVED', toStatus: 'APPROVED',
+        eventType: 'REVISION_REQUESTED',
+        fromStatus: 'APPROVED',
+        toStatus: 'APPROVED',
+        deviceIp: '192.0.2.10',
       });
       expect(usePtwStore.getState().requestRevision(issued.id, 'Another change', '1234').ok).toBe(false);
 
