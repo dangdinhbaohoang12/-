@@ -12,45 +12,87 @@ permissions:
   issues: write
 
 jobs:
-  # JOB 1: KÍCH HOẠT AUTO-SQUASH (Chạy khi PR sạch, pass review và có nhãn "tự động hợp nhất")
+  # JOB 1: KÍCH HOẠT AUTO-SQUASH (Chạy khi có nhãn "tự động hợp nhất")
   enable-auto-squash:
     runs-on: ubuntu-latest
-    # Chỉ chạy khi PR có nhãn "tự động hợp nhất"
     if: contains(github.event.pull_request.labels.*.name, 'tự động hợp nhất')
     steps:
-      - name: Enable Auto-Merge (Squash)
-        uses: alexwilson/enable-github-automerge-action@main
+      - name: Enable Auto-Merge via GitHub Script
+        uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          merge-method: SQUASH # Thay đổi thành SQUASH theo yêu cầu của bạn
+          github-token: \${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prNumber = context.payload.pull_request.number;
+            
+            // Sử dụng GraphQL API chính thức của GitHub để bật Auto-Merge
+            const query = `
+              mutation($pullRequestId: ID!, $mergeMethod: PullRequestMergeMethod!) {
+                enablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId, mergeMethod: $mergeMethod }) {
+                  pullRequest {
+                    autoMergeRequest {
+                      enabledAt
+                      enabledBy {
+                        login
+                      }
+                    }
+                  }
+                }
+              }
+            `;
+            
+            // Lấy node_id của PR
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+            
+            try {
+              await github.graphql(query, { pullRequestId: pr.node_id, mergeMethod: 'SQUASH' });
+              console.log('✅ Đã kích hoạt Auto-Merge (Squash) thành công!');
+            } catch (error) {
+              console.error('❌ Thất bại khi bật Auto-Merge:', error.message);
+              core.setFailed(error.message);
+            }
 
   # JOB 2: XỬ LÝ KHI CÓ REVIEWER CAN THIỆP (Bình luận / Yêu cầu sửa) -> Đổi nhãn lỗi
   handle-reviewer-intervention:
     runs-on: ubuntu-latest
     if: |
-      github.event_name == 'pull_request_review' &&
+      github.event_name == 'pull_request_review' && 
       (github.event.review.state == 'commented' || github.event.review.state == 'changes_requested')
     steps:
       - name: Update Labels (Remove Auto, Add Error Label)
         uses: actions/github-script@v7
         with:
           script: |
-            const prNumber = context.payload.pull_request.number;
-            const labels = context.payload.pull_request.labels.map(l => l.name);
+            const prNumber = context.payload.pull_request.number || context.payload.review.pull_request.number;
+            
+            // Lấy thông tin PR hiện tại để lấy danh sách nhãn chính xác nhất
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+            const labels = pr.labels.map(l => l.name);
             
             // Nếu đang có nhãn tự động hợp nhất thì gỡ ra
             if (labels.includes('tự động hợp nhất')) {
               await github.rest.issues.removeLabel({
-                owner: context.repo.owner, repo: context.repo.repo,
-                issue_number: prNumber, name: 'tự động hợp nhất'
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                name: 'tự động hợp nhất'
               });
             }
             
             // Thêm nhãn không đủ điều kiện hợp nhất
             if (!labels.includes('không đủ điều kiện hợp nhất')) {
               await github.rest.issues.addLabels({
-                owner: context.repo.owner, repo: context.repo.repo,
-                issue_number: prNumber, labels: ['không đủ điều kiện hợp nhất']
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                labels: ['không đủ điều kiện hợp nhất']
               });
             }
 
@@ -58,34 +100,41 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            github.rest.issues.createComment({
-              owner: context.repo.owner, repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
+            const prNumber = context.payload.pull_request.number || context.payload.review.pull_request.number;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
               body: '⚠️ **Không thể hợp nhất khi có reviewer bình luận hoặc yêu cầu chỉnh sửa.** Đã chuyển trạng thái sang "không đủ điều kiện hợp nhất".'
             });
 
   # JOB 3: TỰ ĐỘNG KHÔI PHỤC (Chạy khi push sửa code / giải quyết xung đột xong)
   check-and-recover:
     runs-on: ubuntu-latest
-    # Chạy khi PR được cập nhật (synchronize) hoặc được review lại
-    if: github.event_name == 'pull_request' || (github.event_name == 'pull_request_review' && github.event.review.state == 'approved')
+    if: |
+      github.event_name == 'pull_request' || 
+      (github.event_name == 'pull_request_review' && github.event.review.state == 'approved')
     steps:
       - name: Check PR Status (Conflicts & Reviews)
         id: pr_check
         uses: actions/github-script@v7
         with:
           script: |
+            const prNumber = context.payload.pull_request ? context.payload.pull_request.number : context.payload.review.pull_request.number;
+            
             // Đợi một chút để GitHub cập nhật trạng thái mergeable sau khi push
-            await new Promise(r => setTimeout(r, 5000)); 
+            await new Promise(r => setTimeout(r, 5000));
             
             const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner, repo: context.repo.repo,
-              pull_number: context.payload.pull_request.number
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
             });
             
             const { data: reviews } = await github.rest.pulls.listReviews({
-              owner: context.repo.owner, repo: context.repo.repo,
-              pull_number: context.payload.pull_request.number
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
             });
             
             // Kiểm tra xem có review nào đang chặn (CHANGES_REQUESTED) không
@@ -101,21 +150,31 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const prNumber = context.payload.pull_request.number;
-            const labels = context.payload.pull_request.labels.map(l => l.name);
+            const prNumber = context.payload.pull_request ? context.payload.pull_request.number : context.payload.review.pull_request.number;
+            
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+            const labels = pr.labels.map(l => l.name);
             
             // Xóa nhãn báo lỗi cũ nếu có
             if (labels.includes('không đủ điều kiện hợp nhất')) {
               await github.rest.issues.removeLabel({
-                owner: context.repo.owner, repo: context.repo.repo,
-                issue_number: prNumber, name: 'không đủ điều kiện hợp nhất'
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                name: 'không đủ điều kiện hợp nhất'
               });
             }
             
             // Tự động thêm lại nhãn hợp nhất
             if (!labels.includes('tự động hợp nhất')) {
               await github.rest.issues.addLabels({
-                owner: context.repo.owner, repo: context.repo.repo,
-                issue_number: prNumber, labels: ['tự động hợp nhất']
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                labels: ['tự động hợp nhất']
               });
             }
