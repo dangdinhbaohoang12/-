@@ -167,7 +167,7 @@ export function DashboardPage() {
 
 function PermitRow({ permit: p, allPermits, onOpen }: { permit: Permit; allPermits: Permit[]; onOpen: () => void }) {
   const meta = STATUS_META[p.status];
-  const mins = minutesUntil(p.plannedEnd);
+  const mins = minutesUntil(p.validUntil ?? p.plannedEnd);
   const conflicts = detectSimopsConflicts(p, allPermits);
   const gasOk = hasValidGasTest(p);
   return (

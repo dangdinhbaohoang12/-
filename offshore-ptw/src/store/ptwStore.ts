@@ -246,9 +246,11 @@ function applyTransitionResult(
       permits = permits.map((p) => p.id === previous.id ? {
         ...p,
         supersededByPermitId: after.id,
+        status: 'CANCELLED',
+        currentApprovalLevel: null,
         statusHistory: [...p.statusHistory, {
           id: newId(), sequence: p.statusHistory.length,
-          fromStatus: p.status, toStatus: p.status,
+          fromStatus: p.status, toStatus: 'CANCELLED',
           eventType: 'REVISION_CREATED',
           userId: after.createdById, userName: after.applicantName,
           userRole: 'PERMIT_CONTROLLER',
@@ -813,6 +815,10 @@ export const usePtwStore = create<PtwState>()(
         }
         if (!verifyPin(actor, pin)) return { ok: false, error: 'PIN điện tử không đúng.' };
         if (!reason.trim()) return { ok: false, error: 'Lý do revision là bắt buộc.' };
+        if (state.permits.some((p) => p.parentPermitId === permitId &&
+          ['DRAFT', 'SUBMITTED', 'LINE_SUPERVISOR_REVIEW', 'FPS_REVIEW', 'DEPUTY_OIM_REVIEW', 'OIM_REVIEW', 'RETURNED'].includes(p.status))) {
+          return { ok: false, error: 'Permit đã có Revision đang chờ phê duyệt.' };
+        }
 
         const snapshot: Permit = JSON.parse(JSON.stringify(permit));
         const newPermit: Permit = {
@@ -864,11 +870,8 @@ export const usePtwStore = create<PtwState>()(
           createdById: actor.id,
         };
 
-        const archivedOriginal: Permit = {
+        const originalWithRevision: Permit = {
           ...permit,
-          supersededByPermitId: newPermit.id,
-          status: 'CANCELLED',
-          currentApprovalLevel: null,
           revisions: [...permit.revisions, {
             revisionNo: permit.revisionNo,
             createdAt: nowIso(),
@@ -878,7 +881,7 @@ export const usePtwStore = create<PtwState>()(
           }],
           statusHistory: [
             ...permit.statusHistory,
-            makeHistory(permit, permit.status, 'CANCELLED', {
+            makeHistory(permit, permit.status, permit.status, {
               eventType: 'REVISION_REQUESTED',
               userId: actor.id,
               userName: actor.fullName,
@@ -889,11 +892,10 @@ export const usePtwStore = create<PtwState>()(
               timestamp: nowIso(),
             }),
           ],
-          updatedAt: nowIso(),
         };
 
         set({
-          permits: state.permits.map((p) => (p.id === permitId ? archivedOriginal : p)).concat(newPermit),
+          permits: state.permits.map((p) => (p.id === permitId ? originalWithRevision : p)).concat(newPermit),
           selectedPermitId: newPermit.id,
         });
         return { ok: true, newPermitId: newPermit.id };
@@ -970,4 +972,3 @@ export const usePtwStore = create<PtwState>()(
     }
   )
 );
-

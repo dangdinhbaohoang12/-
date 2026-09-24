@@ -1,10 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { checkPermission } from './engine/rbacMatrix';
 import { buildApprovalChain } from './engine/approvalRuleEngine';
 import { computeOverallResult, hasAllRequiredParameters, hasValidGasTest } from './engine/gasTestEngine';
 import { detectSimopsConflicts } from './engine/simopsEngine';
 import { approveAtCurrentLevel } from './engine/workflowStateMachine';
-import type { Permit } from './types/domain';
+import { hashPin } from './data/catalog';
+import { usePtwStore } from './store/ptwStore';
+import type { Permit, UserAccount } from './types/domain';
 
 const permit=(o:Partial<Permit>={}):Permit=>({
  id:'P1',permitNumber:'MT1-PTW-2026-000001',revisionNo:0,platformCode:'MT1',
@@ -65,5 +67,57 @@ describe('Permit validity', () => {
     });
     expect(result.ok).toBe(true);
     expect(result.permit?.validUntil).toBe('2026-09-24T22:00:00.000Z');
+  });
+});
+
+describe('Revision lifecycle', () => {
+  it('keeps the issued permit active until the revision receives final approval', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-24T10:00:00.000Z'));
+    try {
+      const actor: UserAccount = {
+        id: 'OIM-1', username: 'oim', fullName: 'OIM', role: 'OIM', platformCode: 'MT1',
+        pinHash: hashPin('1234'), active: true, mustChangePin: false,
+        createdAt: '2026-09-24T09:00:00.000Z', createdByUserId: 'SYSTEM',
+      };
+      const issued = permit({
+        status: 'APPROVED', riskLevel: 'HIGH', validUntil: '2026-09-24T22:00:00.000Z',
+        plannedEnd: '2026-09-25T10:00:00.000Z',
+      });
+      usePtwStore.setState({ permits: [issued], currentUser: actor });
+
+      const request = usePtwStore.getState().requestRevision(issued.id, 'Change scope', '1234');
+      expect(request.ok).toBe(true);
+      const original = usePtwStore.getState().permits.find((p) => p.id === issued.id)!;
+      expect(original.status).toBe('APPROVED');
+      expect(original.currentApprovalLevel).toBe(issued.currentApprovalLevel);
+      expect(original.supersededByPermitId).toBeUndefined();
+      expect(original.updatedAt).toBe(issued.updatedAt);
+      expect(original.revisions).toHaveLength(1);
+      expect(original.statusHistory.at(-1)).toMatchObject({
+        eventType: 'REVISION_REQUESTED', fromStatus: 'APPROVED', toStatus: 'APPROVED',
+      });
+      expect(usePtwStore.getState().requestRevision(issued.id, 'Another change', '1234').ok).toBe(false);
+
+      const revision = usePtwStore.getState().permits.find((p) => p.id === request.newPermitId)!;
+      usePtwStore.setState({ permits: [original, {
+        ...revision, status: 'OIM_REVIEW', currentApprovalLevel: 'OIM',
+        approvalChain: revision.approvalChain.map((step) => step.required && step.level !== 'OIM'
+          ? { ...step, status: 'DONE' as const }
+          : step),
+      }] });
+      expect(usePtwStore.getState().runTransition(revision.id, 'APPROVE', '1234').ok).toBe(true);
+      const retired = usePtwStore.getState().permits.find((p) => p.id === issued.id)!;
+      expect(retired).toMatchObject({
+        status: 'CANCELLED', currentApprovalLevel: null, supersededByPermitId: revision.id,
+      });
+      expect(retired.statusHistory.at(-1)).toMatchObject({
+        fromStatus: 'APPROVED', toStatus: 'CANCELLED',
+      });
+      expect(usePtwStore.getState().permits.find((p) => p.id === revision.id)?.status).toBe('APPROVED');
+    } finally {
+      vi.useRealTimers();
+      usePtwStore.setState({ permits: [], currentUser: null });
+    }
   });
 });
