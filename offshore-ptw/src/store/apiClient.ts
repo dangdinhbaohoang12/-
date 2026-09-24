@@ -1,4 +1,4 @@
-import type { AppNotification, GasTestRecord, Permit, Role, UserAccount } from './types/domain';
+import type { AppNotification, GasTestRecord, Permit, Role, UserAccount } from '../types/domain';
 
 export interface ActionResult { ok: boolean; error?: string; }
 
