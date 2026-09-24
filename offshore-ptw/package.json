@@ -10,10 +10,11 @@
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --noEmit",
-    "build": "tsc --noEmit && vite build",
+    "build": "npm run typecheck && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "typecheck:api": "tsc -p tsconfig.api.json --noEmit"
   },
   "dependencies": {
     "clsx": "^2.1.1",
