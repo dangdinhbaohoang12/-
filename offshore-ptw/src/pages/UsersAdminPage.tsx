@@ -45,9 +45,9 @@ export function UsersAdminPage() {
     );
   }
 
-  const submit = () => {
+  const submit = async () => {
     setMsg(null);
-    const res = createUser(
+    const res = await createUser(
       { fullName: fullName.trim(), username: username.trim().toLowerCase(), role, platformCode: currentUser.platformCode, organization: org.trim(), certificationNumber: cert.trim(), initialPin: pin },
       operatorPin
     );
@@ -56,15 +56,15 @@ export function UsersAdminPage() {
     setFullName(''); setUsername(''); setOrg(''); setCert(''); setPin('');
   };
 
-  const savePin = () => {
+  const savePin = async () => {
     if (!pinTarget) return;
-    const res = changePin(pinTarget.id, newPin, operatorPin);
+    const res = await changePin(pinTarget.id, newPin, operatorPin);
     setMsg(res.ok ? { ok: true, text: `Đã cập nhật PIN cho ${pinTarget.username}.` } : { ok: false, text: res.error ?? 'Lỗi.' });
     setPinTarget(null); setNewPin('');
   };
 
-  const toggleActive = (u: User) => {
-    const res = toggleUserActive(u.id, !u.active, operatorPin);
+  const toggleActive = async (u: User) => {
+    const res = await toggleUserActive(u.id, !u.active, operatorPin);
     setMsg(res.ok ? { ok: true, text: `Đã ${u.active ? 'khóa' : 'mở khóa'} tài khoản ${u.username}.` } : { ok: false, text: res.error ?? 'Lỗi.' });
   };
 
