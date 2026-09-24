@@ -31,7 +31,7 @@ jobs:
               if (context.payload.action === 'opened') {
                 const welcomeMessage = `Cảm ơn bạn đã báo cáo vấn đề. Nếu như đó là vấn đề sửa, vui lòng ghi \`fix:...\`, còn không thì ghi \`chore:\`.
                 
-                Nếu bạn biết cách sửa, hoan nghênh các đóng góp. Bạn có thể đóng góp tại yêu cầu kéo này: https://github.com`;
+                Nếu bạn biết cách sửa, hoan nghênh các đóng góp. Bạn có thể đóng góp tại yêu cầu kéo này: https://github.com/dangdinhbaohoang12/quan-ly-gian/pulls`;
                 
                 await github.rest.issues.createComment({
                   owner: context.repo.owner,
@@ -69,7 +69,7 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: prNumber,
-                body: `đây chỉ là nhãn dán để tránh Ai cubic bình luận quá nhiều, code không hề có vấn đề gì cả. nó sẽ được hạ xuống khi chủ kho lưu trữ hạ.`
+                body: `đây chỉ là nhãn dán để tránh Ai cubic bình luận quá nhiều, code không hề có vấn đề gì cả. nó sẽ được hạ xuống.`
               });
               
               // Tự động dán nhãn skip-review
