@@ -111,9 +111,9 @@ export function PermitDetailPage() {
   const locked = !['DRAFT', 'RETURNED'].includes(permit.status);
   const approverOf = (userId?: string) => users.find((u) => u.id === userId);
 
-  const runAction = (pin: string, comment: string): boolean => {
+  const runAction = async (pin: string, comment: string): Promise<boolean> => {
     if (!signoff) return false;
-    const res = perform(signoff.action, { id: permit.id }, pin, comment);
+    const res = await perform(signoff.action, { id: permit.id }, pin, comment);
     if (!res.ok) return false;
     setSignoff(null);
     return true;
@@ -247,7 +247,7 @@ function DetailField({ label, value }: { label: string; value: React.ReactNode }
 function SignoffModal({ pending, onClose, onConfirm, permitNumber }: {
   pending: PendingAction | null;
   onClose: () => void;
-  onConfirm: (pin: string, comment: string) => boolean;
+  onConfirm: (pin: string, comment: string) => Promise<boolean>;
   permitNumber: string;
 }) {
   const currentUser = usePtwStore((s) => s.currentUser);
@@ -256,10 +256,10 @@ function SignoffModal({ pending, onClose, onConfirm, permitNumber }: {
   const [error, setError] = useState<string | null>(null);
   const needsComment = !!pending && (pending.action === 'REJECT' || pending.action === 'RETURN_FOR_CLARIFICATION' || pending.action === 'SUSPEND' || pending.action === 'CREATE_REVISION');
 
-  const confirm = () => {
+  const confirm = async () => {
     setError(null);
     if (needsComment && !comment.trim()) { setError('Hành động này bắt buộc nhập lý do / bình luận.'); return; }
-    const ok = onConfirm(pin, comment.trim());
+    const ok = await onConfirm(pin, comment.trim());
     if (!ok) return;
     setPin(''); setComment('');
     onClose();
