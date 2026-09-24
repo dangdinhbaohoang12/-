@@ -32,7 +32,7 @@ export function PermitFormPage() {
   const nextNumber = useMemo(() => {
     const year = new Date().getFullYear();
     const nums = permits.filter((p) => p.platformCode === platform && p.permitNumber.startsWith(`${platform}-PTW-${year}-`)).map((p) => Number(p.permitNumber.split('-').pop())).filter(Number.isFinite);
-    return `${platform}-PTW-${year}-${String(Math.max(0, ...nums) + 1).padStart(6, '0')}`;
+    return `${platform}-PTW-${year}-${String(Math.max(0, ...nums) + 1).padStart(5, '0')}`;
   }, [permits, platform]);
   const [equipmentTag, setEquipmentTag] = useState('');
   const [description, setDescription] = useState('');

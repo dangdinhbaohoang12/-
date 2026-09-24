@@ -107,7 +107,7 @@ export function PermitDetailPage() {
   const meta = STATUS_META[permit.status];
   const catalog = PERMIT_TYPE_CATALOG_MAP[permit.permitType];
   const conflicts = detectSimopsConflicts(permit, permits);
-  const mins = minutesUntil(permit.plannedEnd);
+  const mins = minutesUntil(permit.validUntil ?? permit.plannedEnd);
   const locked = !['DRAFT', 'RETURNED'].includes(permit.status);
   const approverOf = (userId?: string) => users.find((u) => u.id === userId);
 
@@ -145,12 +145,12 @@ export function PermitDetailPage() {
             </p>
             <p className="max-w-2xl text-sm">{permit.workDescription}</p>
             <p className="font-mono text-[11px] text-muted-foreground">
-              Hiệu lực: {formatTimestamp(permit.plannedStart)} → {formatTimestamp(permit.plannedEnd)} · Applicant: {permit.applicantName}{permit.applicantRole ? ` (${ROLE_LABELS_VI[permit.applicantRole]})` : ''}
+              Hiệu lực: {formatTimestamp(permit.plannedStart)} → {formatTimestamp(permit.validUntil ?? permit.plannedEnd)} · Applicant: {permit.applicantName}{permit.applicantRole ? ` (${ROLE_LABELS_VI[permit.applicantRole]})` : ''}
             </p>
           </div>
           <div className="shrink-0 text-center">
             <div className="rounded-xl bg-white p-2.5 shadow-lg">
-              <QRCodeSVG size={116} value={`PTW|${permit.permitNumber}|REV${permit.revisionNo}|${permit.status}|${permit.areaCode}|${permit.plannedEnd}`} />
+              <QRCodeSVG size={116} value={`PTW|${permit.permitNumber}|REV${permit.revisionNo}|${permit.status}|${permit.areaCode}|${permit.validUntil ?? permit.plannedEnd}`} />
             </div>
             <p className="mt-1 text-[9px] font-bold uppercase tracking-widest text-muted-foreground">QR xác thực permit</p>
           </div>

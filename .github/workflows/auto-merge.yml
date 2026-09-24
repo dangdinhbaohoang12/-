@@ -1,0 +1,54 @@
+name: Auto Merge PR
+
+on:
+  pull_request:
+    types: [labeled, opened, edited, synchronize]
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  pull_requests: write
+  contents: write
+
+jobs:
+  # JOB 1: Kích hoạt tự động gộp nếu thỏa mãn điều kiện nhãn
+  enable-auto-merge:
+    runs-on: ubuntu-latest
+    if: contains(github.event.pull_request.labels.*.name, 'sẵn sàng hợp nhất') && (github.event.review.state == 'approved' || github.event_name != 'pull_request_review')
+    steps:
+      - name: Enable Auto-Merge
+        uses: alexwilson/enable-github-automerge-action@main
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          merge-method: MERGE
+
+  # JOB 2: Hủy nhãn và thông báo nếu reviewer bình luận hoặc yêu cầu chỉnh sửa
+  handle-reviewer-intervention:
+    runs-on: ubuntu-latest
+    # Chỉ chạy khi có review mới được gửi VÀ PR đó hiện đang có nhãn "sẵn sàng hợp nhất"
+    if: |
+      github.event_name == 'pull_request_review' &&
+      contains(github.event.pull_request.labels.*.name, 'sẵn sàng hợp nhất') &&
+      (github.event.review.state == 'commented' || github.event.review.state == 'changes_requested')
+    steps:
+      - name: Remove Label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.removeLabel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              name: 'sẵn sàng hợp nhất'
+            });
+
+      - name: Comment Warning
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: '⚠️ **Không thể hợp nhất khi có reviewer bình luận hoặc yêu cầu chỉnh sửa.** Nhãn "sẵn sàng hợp nhất" đã tự động bị gỡ bỏ.'
+            });
