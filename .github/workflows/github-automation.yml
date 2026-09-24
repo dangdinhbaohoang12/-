@@ -2,9 +2,10 @@ name: GitHub Automation Bot
 
 on:
   issues:
-    types: [opened]
+    types: [opened, edited]
   pull_request:
     types: [opened]
+  workflow_dispatch:
 
 jobs:
   automation:
@@ -19,33 +20,36 @@ jobs:
           script: |
             const eventName = context.eventName;
             
-            // 1. XỬ LÝ KHI CÓ ISSUE MỚI
+            // 1. XỬ LÝ KHI CÓ ISSUE MỚI HOẶC CẬP NHẬT ISSUE
             if (eventName === 'issues') {
               const issueTitle = context.payload.issue.title || "";
+              const issueBody = context.payload.issue.body || "";
               const issueNumber = context.issue.number;
+              const fullContent = `${issueTitle} ${issueBody}`.toLowerCase();
               
-              // Nội dung bình luận mặc định
-              const welcomeMessage = `Cảm ơn bạn đã báo cáo vấn đề. Nếu như đó là vấn đề sửa, vui lòng ghi \`fix:...\`, còn không thì ghi \`chore:\`.
-              
-              Nếu bạn biết cách sửa, hoan nghênh các đóng góp. Bạn có thể đóng góp tại yêu cầu kéo này: https://github.com`;
-              
-              // Gửi bình luận chào mừng
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: issueNumber,
-                body: welcomeMessage
-              });
-              
-              // Kiểm tra tiêu đề để dán nhãn tương ứng (Không phân biệt chữ hoa/thường)
-              let labelToAdd = "";
-              if (issueTitle.toLowerCase().startsWith('fix:')) {
-                labelToAdd = "high priority"; // Ưu tiên cao
-              } else if (issueTitle.toLowerCase().startsWith('chore:')) {
-                labelToAdd = "low priority"; // Ưu tiên thấp
+              // Gửi bình luận chào mừng nếu đây là hành động tạo mới (opened)
+              if (context.payload.action === 'opened') {
+                const welcomeMessage = `Cảm ơn bạn đã báo cáo vấn đề. Nếu như đó là vấn đề sửa, vui lòng ghi \`fix:...\`, còn không thì ghi \`chore:\`.
+                
+                Nếu bạn biết cách sửa, hoan nghênh các đóng góp. Bạn có thể đóng góp tại yêu cầu kéo này: https://github.com`;
+                
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  body: welcomeMessage
+                });
               }
               
-              // Nếu khớp từ khóa thì tiến hành dán nhãn
+              // Kiểm tra từ khóa để xác định nhãn cần dán
+              let labelToAdd = "";
+              if (fullContent.includes('fix:') || fullContent.includes('fix ')) {
+                labelToAdd = "high priority";
+              } else if (fullContent.includes('chore:') || fullContent.includes('chore ')) {
+                labelToAdd = "low priority";
+              }
+              
+              // Tiến hành dán nhãn nếu tìm thấy từ khóa thích hợp
               if (labelToAdd) {
                 await github.rest.issues.addLabels({
                   owner: context.repo.owner,
@@ -56,18 +60,16 @@ jobs:
               }
             }
             
-            // 2. XỬ LÝ KHI CÓ PULL REQUEST (YÊU CẦU KÉO) MỚI
+            // 2. XỬ LÝ KHI CÓ PULL REQUEST MỚI
             if (eventName === 'pull_request') {
               const prNumber = context.payload.pull_request.number;
               
-              const prMessage = `đây chỉ là nhãn dán để tránh Ai cubic bình luận quá nhiều, code không hề có vấn đề gì cả. nó sẽ được hạ xuống khi chủ kho lưu trữ hạ.`;
-              
-              // Gửi thông báo trong Pull Request
+              // Gửi bình luận thông báo vào Pull Request
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: prNumber,
-                body: prMessage
+                body: `đây chỉ là nhãn dán để tránh Ai cubic bình luận quá nhiều, code không hề có vấn đề gì cả. nó sẽ được hạ xuống khi chủ kho lưu trữ hạ.`
               });
               
               // Tự động dán nhãn skip-review
