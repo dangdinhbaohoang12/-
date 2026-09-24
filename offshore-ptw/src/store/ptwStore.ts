@@ -22,6 +22,7 @@ import {
   SimopsConflict,
   StatusHistoryEntry,
   UserAccount,
+  ACTIVE_LIFECYCLE_STATUSES,
 } from '../types/domain';
 import {
   AREAS,
@@ -233,7 +234,8 @@ function applyTransitionResult(
   set: (partial: Partial<PtwState>) => void,
   permitId: string,
   result: ReturnType<typeof approveAtCurrentLevel>,
-  before: Permit
+  before: Permit,
+  actor: UserAccount
 ): ActionResult {
   if (!result.ok || !result.permit) return { ok: false, error: result.error };
   const after = result.permit;
@@ -243,21 +245,29 @@ function applyTransitionResult(
     const previous = permits.find((p) => p.id === after.parentPermitId);
     if (previous && !previous.supersededByPermitId) {
       const now = nowIso();
-      permits = permits.map((p) => p.id === previous.id ? {
-        ...p,
-        supersededByPermitId: after.id,
-        statusHistory: [...p.statusHistory, {
-          id: newId(), sequence: p.statusHistory.length,
-          fromStatus: p.status, toStatus: p.status,
-          eventType: 'REVISION_CREATED',
-          userId: after.createdById, userName: after.applicantName,
-          userRole: 'PERMIT_CONTROLLER',
-          action: 'Bản permit này đã được thay thế bởi Revision mới đã phát hành',
-          deviceIp: DEFAULT_IP,
-          newValues: { supersededByPermitId: after.id }, timestamp: now,
-        }],
-        updatedAt: now,
-      } : p);
+      permits = permits.map((p) => {
+        if (p.id !== previous.id) return p;
+        if (!ACTIVE_LIFECYCLE_STATUSES.includes(p.status)) {
+          return { ...p, supersededByPermitId: after.id, updatedAt: now };
+        }
+        return {
+          ...p,
+          supersededByPermitId: after.id,
+          status: 'CANCELLED',
+          currentApprovalLevel: null,
+          statusHistory: [...p.statusHistory, {
+            id: newId(), sequence: p.statusHistory.length,
+            fromStatus: p.status, toStatus: 'CANCELLED',
+            eventType: 'REVISION_CREATED',
+            userId: actor.id, userName: actor.fullName,
+            userRole: actor.role,
+            action: 'Bản permit này đã được thay thế bởi Revision mới đã phát hành',
+            deviceIp: state.sessionDeviceIp ?? DEFAULT_IP,
+            newValues: { supersededByPermitId: after.id }, timestamp: now,
+          }],
+          updatedAt: now,
+        };
+      });
     }
   }
 
@@ -459,7 +469,7 @@ export const usePtwStore = create<PtwState>()(
 
         const year = new Date().getFullYear();
         const seq = state.permits.filter((p) => p.platformCode === area.platformCode).length + 1;
-        const permitNumber = `${area.platformCode}-PTW-${year}-${String(seq).padStart(6, '0')}`;
+        const permitNumber = `${area.platformCode}-PTW-${year}-${String(seq).padStart(5, '0')}`;
 
         const classifications = Array.from(
           new Set([
@@ -679,7 +689,7 @@ export const usePtwStore = create<PtwState>()(
           default:
             return { ok: false, error: 'Hành động không được hỗ trợ.' };
         }
-        return applyTransitionResult(get, set, permitId, result, permit);
+        return applyTransitionResult(get, set, permitId, result, permit, actor);
       },
 
       perform: (action, target, pin, comment) => {
@@ -741,7 +751,7 @@ export const usePtwStore = create<PtwState>()(
               userName: actor.fullName,
               userRole: actor.role,
               action: `Ghi nhận Gas Test #${gasTest.sequenceNo} (${overall}) – detector ${gasTest.gasDetectorId}`,
-              deviceIp: DEFAULT_IP,
+              deviceIp: state.sessionDeviceIp ?? DEFAULT_IP,
               newValues: { result: overall, detector: gasTest.gasDetectorId },
               timestamp: nowIso(),
             }),
@@ -788,7 +798,7 @@ export const usePtwStore = create<PtwState>()(
               userRole: actor.role,
               action: `Ghi nhận đánh giá xung đột SIMOPS ${conflictId}`,
               comment: decisionNote,
-              deviceIp: DEFAULT_IP,
+              deviceIp: state.sessionDeviceIp ?? DEFAULT_IP,
               timestamp: nowIso(),
             }),
           ],
@@ -813,12 +823,18 @@ export const usePtwStore = create<PtwState>()(
         }
         if (!verifyPin(actor, pin)) return { ok: false, error: 'PIN điện tử không đúng.' };
         if (!reason.trim()) return { ok: false, error: 'Lý do revision là bắt buộc.' };
+        const children = state.permits.filter((p) => p.parentPermitId === permitId);
+        if (permit.supersededByPermitId || children.some((p) =>
+          ACTIVE_LIFECYCLE_STATUSES.includes(p.status) || ['DRAFT', 'RETURNED'].includes(p.status))) {
+          return { ok: false, error: 'Permit đã có Revision đang chờ phê duyệt.' };
+        }
 
+        const nextRevisionNo = Math.max(permit.revisionNo, ...children.map((p) => p.revisionNo)) + 1;
         const snapshot: Permit = JSON.parse(JSON.stringify(permit));
         const newPermit: Permit = {
           ...snapshot,
           id: newId(),
-          revisionNo: permit.revisionNo + 1,
+          revisionNo: nextRevisionNo,
           parentPermitId: permit.id,
           previousRevisionOfPermitId: permit.id,
           revisionReason: reason.trim(),
@@ -850,11 +866,11 @@ export const usePtwStore = create<PtwState>()(
               userId: actor.id,
               userName: actor.fullName,
               userRole: actor.role,
-              action: `Tạo Rev ${permit.revisionNo + 1} từ ${permit.permitNumber} Rev ${permit.revisionNo} – yêu cầu phê duyệt lại toàn bộ chuỗi`,
+              action: `Tạo Rev ${nextRevisionNo} từ ${permit.permitNumber} Rev ${permit.revisionNo} – yêu cầu phê duyệt lại toàn bộ chuỗi`,
               comment: reason.trim(),
-              deviceIp: DEFAULT_IP,
+              deviceIp: state.sessionDeviceIp ?? DEFAULT_IP,
               oldValues: { revision: `Rev ${permit.revisionNo}` },
-              newValues: { revision: `Rev ${permit.revisionNo + 1}` },
+              newValues: { revision: `Rev ${nextRevisionNo}` },
               timestamp: nowIso(),
             },
           ],
@@ -864,7 +880,7 @@ export const usePtwStore = create<PtwState>()(
           createdById: actor.id,
         };
 
-        const archivedOriginal: Permit = {
+        const originalWithRevision: Permit = {
           ...permit,
           revisions: [...permit.revisions, {
             revisionNo: permit.revisionNo,
@@ -880,17 +896,16 @@ export const usePtwStore = create<PtwState>()(
               userId: actor.id,
               userName: actor.fullName,
               userRole: actor.role,
-              action: `Yêu cầu Revision → ${permit.permitNumber} Rev ${permit.revisionNo + 1}`,
+              action: `Yêu cầu Revision → ${permit.permitNumber} Rev ${nextRevisionNo}`,
               comment: reason.trim(),
-              deviceIp: DEFAULT_IP,
+              deviceIp: state.sessionDeviceIp ?? DEFAULT_IP,
               timestamp: nowIso(),
             }),
           ],
-          updatedAt: nowIso(),
         };
 
         set({
-          permits: state.permits.map((p) => (p.id === permitId ? archivedOriginal : p)).concat(newPermit),
+          permits: state.permits.map((p) => (p.id === permitId ? originalWithRevision : p)).concat(newPermit),
           selectedPermitId: newPermit.id,
         });
         return { ok: true, newPermitId: newPermit.id };
@@ -967,4 +982,3 @@ export const usePtwStore = create<PtwState>()(
     }
   )
 );
-
