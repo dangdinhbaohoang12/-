@@ -305,11 +305,11 @@ function filterVisiblePermits(user: any, permits: Permit[]): Permit[] {
 }
 
 async function publicState(userRow: any | null): Promise<Record<string, unknown>> {
-  const users = (await getAllUserRows()).map(rowUser);
   if (!userRow) {
-    return { permits: [], users, currentUser: null, notifications: [] };
+    return { permits: [], users: [], currentUser: null, notifications: [] };
   }
 
+  const users = (await getAllUserRows()).map(rowUser);
   const permitRows = await getAllPermitRows();
   const permits = filterVisiblePermits(userRow, permitRows.map(rowPermit));
   const notifications = (await getNotificationRows(userRow.id)).map(rowNotification);
