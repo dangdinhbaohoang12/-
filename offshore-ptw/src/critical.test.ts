@@ -50,7 +50,7 @@ describe('Permit validity', () => {
       plannedEnd: '2026-09-25T10:00:00.000Z',
       approvalChain: buildApprovalChain({
         permitType: 'COLD_WORK',
-        riskLevel: 'LOW',
+        riskLevel: 'HIGH',
         areaHazardous: false,
         criticalWork: false,
         workClassifications: ['ROUTINE'],
