@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/ptw.ts": {
+      "maxDuration": 15
+    }
+  }
+}
