@@ -62,7 +62,7 @@ export function PermitFormPage() {
     return detectSimopsConflicts(dummy as never, permits);
   }, [start, end, areaCode, platform, permits, nextNumber]);
 
-  const submit = () => {
+  const submit = async () => {
     setError(null);
     if (!description.trim() || description.trim().length < 20) { setError('Nội dung công việc tối thiểu 20 ký tự.'); return; }
     if (!reason.trim()) { setError('Lý do phát sinh công việc là bắt buộc.'); return; }
@@ -71,7 +71,7 @@ export function PermitFormPage() {
     if (unchecked.length > 0) { setError(`Còn ${unchecked.length} cấu phần an toàn BẮT BUỘC chưa xác nhận.`); return; }
     if (!pin.trim()) { setError('PIN điện tử xác thực người khởi tạo là bắt buộc.'); return; }
     const currentArea = areas.find((a) => a.code === areaCode);
-    const res = createDraft(
+    const res = await createDraft(
       {
         permitType,
         areaId: currentArea?.id,
