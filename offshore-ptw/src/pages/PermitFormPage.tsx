@@ -1,745 +1,183 @@
-import React, { useEffect, useState } from 'react';
-import { usePermitStore } from '../store/permitStore';
-import { PermitType, JSAItem, Isolation } from '../types';
-import { v4 as uuidv4 } from 'uuid';
-
-const PERMIT_TYPES: { value: PermitType; label: string }[] = [
-  { value: 'COLD_WORK', label: 'Cold Work (Công việc lạnh)' },
-  { value: 'HOT_WORK', label: 'Hot Work (Hàn cắt)' },
-  { value: 'CONFINED_SPACE', label: 'Confined Space (Không gian kín)' },
-  { value: 'RADIOGRAPHY', label: 'Radiography (Chụp ảnh phóng xạ)' },
-  { value: 'ELECTRICAL', label: 'Electrical Work (Điện)' }
-];
-
-const DECKS = ['Upper Deck', 'Main Deck', 'Cellar Deck', 'Drill Floor'];
-
 /**
- * Chuyển đổi một thời điểm (ISO hoặc Date) thành chuỗi giờ địa phương
- * phù hợp với input datetime-local (yyyy-MM-ddTHH:mm), tránh lệch giờ UTC.
- */
-function toLocalDateTimeInputValue(date: Date | string): string {
-  const d = typeof date === 'string' ? new Date(date) : date;
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const year = d.getFullYear();
-  const month = pad(d.getMonth() + 1);
-  const day = pad(d.getDate());
-  const hours = pad(d.getHours());
-  const minutes = pad(d.getMinutes());
-  return `${year}-${month}-${day}T${hours}:${minutes}`;
-}
+ * ============================================================================
+ * PERMIT FORM PAGE – Khởi tạo / chỉnh sửa PTW Draft (chức năng 1)
+ * ----------------------------------------------------------------------------
+ * - Sinh số tự động MT1-PTW-YYYY-NNNNN (khóa, chống trùng).
+ * - Cấu phần checklist theo loại permit + cảnh báo SIMOPS thời gian thực.
+ * ==========================================================================*/
 
-function createDefaultFormData(): FormDataState {
-  return {
-    type: 'COLD_WORK' as PermitType,
-    title: '',
-    location: '',
-    locationTag: '',
-    deck: 'Main Deck',
-    startTime: toLocalDateTimeInputValue(new Date()),
-    endTime: toLocalDateTimeInputValue(new Date(Date.now() + 8 * 60 * 60 * 1000)),
-    workers: [] as string[],
-    ppe: [] as string[],
-    gasTestPassed: false,
-    electricalIsolated: false,
-    pressureIsolated: false,
-    jsaItems: [] as JSAItem[],
-    isolations: [] as Isolation[]
-  };
-}
+import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { PermitTypeCode, RiskLevel, ROLE_LABELS_VI } from '../types/domain';
+import { AREAS, EQUIPMENT_BY_AREA, PERMIT_TYPE_CATALOG_MAP, PLATFORMS } from '../data/catalog';
+import { usePtwStore } from '../store/ptwStore';
+import { Badge, Button, Card, CardContent, CardHeader, CardTitle, FieldRow, inputClass, Select } from '../components/ui/primitives';
+import { SimopsBanner } from '../components/permit/SimopsBanner';
+import { detectSimopsConflicts } from '../engine/simopsEngine';
+import { toLocalInputValue } from '../lib/utils';
 
-interface FormDataState {
-  type: PermitType;
-  title: string;
-  location: string;
-  locationTag: string;
-  deck: string;
-  startTime: string;
-  endTime: string;
-  workers: string[];
-  ppe: string[];
-  gasTestPassed: boolean;
-  electricalIsolated: boolean;
-  pressureIsolated: boolean;
-  jsaItems: JSAItem[];
-  isolations: Isolation[];
-}
+const RISK_OPTIONS: RiskLevel[] = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
 
-export const PermitFormPage: React.FC = () => {
-  const createPermit = usePermitStore(state => state.createPermit);
-  const updatePermit = usePermitStore(state => state.updatePermit);
-  const submitPermit = usePermitStore(state => state.submitPermit);
-  const currentUser = usePermitStore(state => state.currentUser);
-  const selectedPermit = usePermitStore(state => state.selectedPermit);
-  const selectPermit = usePermitStore(state => state.selectPermit);
+export function PermitFormPage() {
+  const navigate = useNavigate();
+  const currentUser = usePtwStore((s) => s.currentUser);
+  const simulatedRole = usePtwStore((s) => s.simulatedRole);
+  const createDraft = usePtwStore((s) => s.createDraft);
+  const permits = usePtwStore((s) => s.permits);
 
-  const [activeTab, setActiveTab] = useState(0);
-  const [formData, setFormData] = useState<FormDataState>(() =>
-    selectedPermit
-      ? {
-          type: selectedPermit.type,
-          title: selectedPermit.title,
-          location: selectedPermit.location,
-          locationTag: selectedPermit.locationTag,
-          deck: selectedPermit.deck,
-          startTime: toLocalDateTimeInputValue(selectedPermit.startTime),
-          endTime: toLocalDateTimeInputValue(selectedPermit.endTime),
-          workers: selectedPermit.workers,
-          ppe: selectedPermit.ppe,
-          gasTestPassed: selectedPermit.gasTestPassed,
-          electricalIsolated: selectedPermit.electricalIsolated,
-          pressureIsolated: selectedPermit.pressureIsolated,
-          jsaItems: selectedPermit.jsaData,
-          isolations: selectedPermit.isolations
-        }
-      : createDefaultFormData()
-  );
+  const nextNumber = useMemo(() => {
+    const year = new Date().getFullYear();
+    const nums = permits.filter((p) => p.platformCode === 'MT1').map((p) => Number(p.permitNumber.split('-').pop()));
+    return `MT1-PTW-${year}-${String(Math.max(0, ...nums) + 1).padStart(5, '0')}`;
+  }, [permits]);
 
-  // Nạp lại form khi permit đang chọn thay đổi (mở permit khác để sửa
-  // hoặc bắt đầu tạo mới sau khi selectedPermit được reset về null).
-  useEffect(() => {
-    if (selectedPermit) {
-      setFormData({
-        type: selectedPermit.type,
-        title: selectedPermit.title,
-        location: selectedPermit.location,
-        locationTag: selectedPermit.locationTag,
-        deck: selectedPermit.deck,
-        startTime: toLocalDateTimeInputValue(selectedPermit.startTime),
-        endTime: toLocalDateTimeInputValue(selectedPermit.endTime),
-        workers: selectedPermit.workers,
-        ppe: selectedPermit.ppe,
-        gasTestPassed: selectedPermit.gasTestPassed,
-        electricalIsolated: selectedPermit.electricalIsolated,
-        pressureIsolated: selectedPermit.pressureIsolated,
-        jsaItems: selectedPermit.jsaData,
-        isolations: selectedPermit.isolations
-      });
-    } else {
-      setFormData(createDefaultFormData());
-    }
-    setActiveTab(0);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedPermit?.id]);
+  const [permitType, setPermitType] = useState<PermitTypeCode>('HOT_WORK');
+  const [platform, setPlatform] = useState('MT1');
+  const [areaCode, setAreaCode] = useState('MH-DECK');
+  const [equipmentTag, setEquipmentTag] = useState('');
+  const [description, setDescription] = useState('');
+  const [reason, setReason] = useState('');
+  const [start, setStart] = useState(toLocalInputValue(new Date(Date.now() + 3600_000).toISOString()));
+  const [end, setEnd] = useState(toLocalInputValue(new Date(Date.now() + 9 * 3600_000).toISOString()));
+  const [risk, setRisk] = useState<RiskLevel>('MEDIUM');
+  const [checked, setChecked] = useState<Record<string, boolean>>({});
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState<string | null>(null);
 
-  const [newJsaItem, setNewJsaItem] = useState({ hazard: '', riskLevel: 'MEDIUM' as const, controlMeasure: '' });
-  const [newIsolation, setNewIsolation] = useState({ equipmentTag: '', isolationType: 'VALVE' as const, lockNumber: '' });
-  const [pinCode, setPinCode] = useState('');
-  const [showPinModal, setShowPinModal] = useState(false);
-  const [submitAction, setSubmitAction] = useState<'SAVE' | 'SUBMIT' | null>(null);
+  if (!currentUser) return null;
+  const catalog = PERMIT_TYPE_CATALOG_MAP[permitType];
+  const areas = AREAS.filter((a) => a.platformCode === platform);
+  const equipmentList = EQUIPMENT_BY_AREA[areaCode] ?? [];
+  const effectiveRole = simulatedRole ?? currentUser.role;
+  void effectiveRole;
 
-  const handleInputChange = (field: string, value: any) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-  };
-
-  const addJsaItem = () => {
-    if (newJsaItem.hazard && newJsaItem.controlMeasure) {
-      const item: JSAItem = {
-        id: uuidv4(),
-        ...newJsaItem
-      };
-      setFormData(prev => ({ ...prev, jsaItems: [...prev.jsaItems, item] }));
-      setNewJsaItem({ hazard: '', riskLevel: 'MEDIUM', controlMeasure: '' });
-    }
-  };
-
-  const addIsolation = () => {
-    if (newIsolation.equipmentTag && newIsolation.lockNumber) {
-      const iso: Isolation = {
-        id: uuidv4(),
-        ...newIsolation
-      };
-      setFormData(prev => ({ ...prev, isolations: [...prev.isolations, iso] }));
-      setNewIsolation({ equipmentTag: '', isolationType: 'VALVE', lockNumber: '' });
-    }
-  };
-
-  const validateDates = (): { startDate: Date; endDate: Date } | null => {
-    if (!formData.startTime || !formData.endTime) {
-      alert('Vui lòng nhập đầy đủ thời gian bắt đầu và kết thúc!');
-      return null;
-    }
-
-    const startDate = new Date(formData.startTime);
-    const endDate = new Date(formData.endTime);
-
-    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
-      alert('Thời gian bắt đầu hoặc kết thúc không hợp lệ!');
-      return null;
-    }
-
-    if (endDate <= startDate) {
-      alert('Thời gian kết thúc phải sau thời gian bắt đầu!');
-      return null;
-    }
-
-    return { startDate, endDate };
-  };
-
-  const handleSave = async (): Promise<boolean> => {
-    if (!formData.title || !formData.location) {
-      alert('Vui lòng nhập tên công việc và vị trí!');
-      return false;
-    }
-
-    const dates = validateDates();
-    if (!dates) {
-      return false;
-    }
-
-    const permitData = {
-      type: formData.type,
-      title: formData.title,
-      location: formData.location,
-      locationTag: formData.locationTag,
-      deck: formData.deck,
-      startTime: dates.startDate.toISOString(),
-      endTime: dates.endDate.toISOString(),
-      workers: formData.workers,
-      ppe: formData.ppe,
-      jsaData: formData.jsaItems,
-      isolations: formData.isolations,
-      gasTestPassed: formData.gasTestPassed,
-      electricalIsolated: formData.electricalIsolated,
-      pressureIsolated: formData.pressureIsolated
+  // Preview xung đột SIMOPS theo thời gian thực từ thông tin đang nhập.
+  const previewConflicts = useMemo(() => {
+    if (!start || !end) return [];
+    const dummy = {
+      id: '__preview__', permitNumber: nextNumber, platformCode: platform, areaCode,
+      plannedStart: new Date(start).toISOString(), plannedEnd: new Date(end).toISOString(),
     };
+    return detectSimopsConflicts(dummy as never, permits);
+  }, [start, end, areaCode, platform, permits, nextNumber]);
 
-    try {
-      if (selectedPermit) {
-        await updatePermit(selectedPermit.id, permitData);
-        alert('Đã cập nhật PTW thành công!');
-      } else {
-        const newPermit = await createPermit(permitData);
-        selectPermit(newPermit);
-        alert('Đã tạo PTW thành công!');
-      }
-      return true;
-    } catch {
-      alert('Không thể lưu PTW ngoại tuyến. Vui lòng thử lại!');
-      return false;
-    }
+  const submit = () => {
+    setError(null);
+    if (!description.trim() || description.trim().length < 20) { setError('Nội dung công việc tối thiểu 20 ký tự.'); return; }
+    if (!reason.trim()) { setError('Lý do phát sinh công việc là bắt buộc.'); return; }
+    if (!start || !end || new Date(end) <= new Date(start)) { setError('Khung thời gian không hợp lệ.'); return; }
+    const unchecked = catalog.checklist.filter((c) => c.required && !checked[c.id]);
+    if (unchecked.length > 0) { setError(`Còn ${unchecked.length} cấu phần an toàn BẮT BUỘC chưa xác nhận.`); return; }
+    if (!pin.trim()) { setError('PIN điện tử xác thực người khởi tạo là bắt buộc.'); return; }
+    const currentArea = areas.find((a) => a.code === areaCode);
+    const res = createDraft(
+      {
+        permitType,
+        areaId: currentArea?.id,
+        equipmentTag: equipmentTag || 'N/A',
+        workDescription: description.trim(), reasonForIssuing: reason.trim(),
+        plannedStart: new Date(start).toISOString(), plannedEnd: new Date(end).toISOString(),
+        riskLevel: risk,
+        riskLevelAssessed: risk,
+        areaCode,
+        platformCode: platform,
+        safetyChecklistConfirmed: catalog.checklist.map((c) => ({ itemId: c.id, labelVi: c.labelVi, confirmed: true })),
+      },
+      pin,
+    );
+    if (!res.ok) { setError(res.error ?? 'Không tạo được draft.'); return; }
+    navigate(`/permits/${res.permit!.id}`);
   };
-
-  const handleSubmit = async (pin: string) => {
-    if (formData.jsaItems.length === 0) {
-      alert('Bắt buộc phải có ít nhất 1 mục JSA!');
-      setActiveTab(2);
-      return;
-    }
-
-    if (!validateDates()) {
-      return;
-    }
-
-    const permitId = selectedPermit?.id;
-    if (!await handleSave()) {
-      return;
-    }
-
-    const targetId = permitId || usePermitStore.getState().selectedPermit?.id;
-    if (targetId) {
-      const submitted = await submitPermit(targetId, pin);
-      if (submitted) {
-        alert('Đã gửi PTW để phê duyệt!');
-      }
-    }
-  };
-
-  const tabs = [
-    { label: 'Thông tin chung', icon: '📋' },
-    { label: 'Nhân sự & PPE', icon: '👷' },
-    { label: 'An toàn & JSA', icon: '⚠️' },
-    { label: 'Kiểm tra & Cô lập', icon: '🔒' }
-  ];
 
   return (
-    <div style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto' }}>
-      <div style={{ 
-        display: 'flex', 
-        justifyContent: 'space-between', 
-        alignItems: 'center',
-        marginBottom: '20px'
-      }}>
-        <h1 style={{ margin: 0, color: '#1a237e' }}>
-          {selectedPermit ? `Chỉnh sửa PTW: ${selectedPermit.permitNumber}` : 'Tạo mới Permit To Work'}
-        </h1>
-        <div>
-          <button
-            onClick={() => { setSubmitAction('SAVE'); setShowPinModal(true); }}
-            style={{
-              marginRight: '10px',
-              padding: '10px 20px',
-              background: '#757575',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer'
-            }}
-          >
-            💾 Lưu nháp
-          </button>
-          <button
-            onClick={() => { setSubmitAction('SUBMIT'); setShowPinModal(true); }}
-            style={{
-              padding: '10px 20px',
-              background: '#1a237e',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer'
-            }}
-          >
-            📤 Gửi duyệt
-          </button>
-        </div>
+    <div className="mx-auto max-w-4xl space-y-4">
+      <div>
+        <h1 className="text-2xl font-black tracking-tight">➕ Khởi tạo giấy phép công tác (PTW)</h1>
+        <p className="text-sm text-muted-foreground">Người khởi tạo: {currentUser.fullName} — {ROLE_LABELS_VI[effectiveRole]} · Số permit cấp tự động, không thể trùng.</p>
       </div>
 
-      {/* Tabs */}
-      <div style={{ 
-        display: 'flex', 
-        borderBottom: '2px solid #e0e0e0',
-        marginBottom: '20px'
-      }}>
-        {tabs.map((tab, index) => (
-          <button
-            key={index}
-            onClick={() => setActiveTab(index)}
-            style={{
-              padding: '12px 24px',
-              background: activeTab === index ? '#1a237e' : 'transparent',
-              color: activeTab === index ? 'white' : '#666',
-              border: 'none',
-              borderBottom: activeTab === index ? '3px solid #1a237e' : '3px solid transparent',
-              cursor: 'pointer',
-              fontWeight: activeTab === index ? 'bold' : 'normal'
-            }}
-          >
-            {tab.icon} {tab.label}
-          </button>
-        ))}
+      <Card>
+        <CardHeader><CardTitle>Thông tin định danh</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <FieldRow label="Số permit (tự sinh)" hint="Định dạng MT1-PTW-YYYY-NNNNN — khóa cứng, chống trùng">
+              <input className={`${inputClass} font-mono`} value={nextNumber} readOnly disabled />
+            </FieldRow>
+            <FieldRow label="Loại giấy phép">
+              <Select value={permitType} onChange={(v) => { setPermitType(v as PermitTypeCode); setChecked({}); }}>
+                {Object.entries(PERMIT_TYPE_CATALOG_MAP).map(([code, meta]) => (
+                  <option key={code} value={code}>{meta.labelVi} ({meta.code})</option>
+                ))}
+              </Select>
+            </FieldRow>
+            <FieldRow label="Giàn / Công trình">
+              <Select value={platform} onChange={setPlatform}>
+                {PLATFORMS.map((p) => <option key={p.code} value={p.code}>{p.name} ({p.code})</option>)}
+              </Select>
+            </FieldRow>
+            <FieldRow label="Khu vực làm việc">
+              <Select value={areaCode} onChange={setAreaCode}>
+                {areas.map((a) => <option key={a.code} value={a.code}>{a.name} ({a.code})</option>)}
+              </Select>
+            </FieldRow>
+            <FieldRow label="Thiết bị cô lập (tag)">
+              <Select value={equipmentTag} onChange={setEquipmentTag} placeholder="— Không gắn thiết bị cụ thể —">
+                {equipmentList.map((e) => <option key={e.tag} value={e.tag}>{e.name} · {e.tag}</option>)}
+              </Select>
+            </FieldRow>
+            <FieldRow label="Mức độ rủi ro tiên đoán">
+              <Select value={risk} onChange={(v) => setRisk(v as RiskLevel)}>
+                {RISK_OPTIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+              </Select>
+            </FieldRow>
+            <FieldRow label="Bắt đầu ca (dự kiến)">
+              <input type="datetime-local" className={inputClass} value={start} onChange={(e) => setStart(e.target.value)} />
+            </FieldRow>
+            <FieldRow label="Kết thúc (dự kiến)" hint={`Hiệu lực tối đa loại này: ${catalog.validityHours}h`}>
+              <input type="datetime-local" className={inputClass} value={end} onChange={(e) => setEnd(e.target.value)} />
+            </FieldRow>
+          </div>
+          <FieldRow label="Nội dung công việc (bắt buộc ≥20 ký tự)">
+            <textarea rows={3} className={inputClass} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="VD: Hàn kết cấu sàn trực thăng tại MH-DECK, cắt gọt dầm phụ..." />
+          </FieldRow>
+          <FieldRow label="Lý do phát sinh công việc">
+            <input className={inputClass} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="VD: Bảo trì theo kế hoạch PM-2026-118" />
+          </FieldRow>
+          <FieldRow label="PIN điện tử xác thực (bắt buộc)" hint="Chữ ký số của người khởi tạo cho bản nháp này">
+            <input type="password" maxLength={8} inputMode="numeric" className={inputClass} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} />
+          </FieldRow>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex-row items-center justify-between space-y-0">
+          <div>
+            <CardTitle>✅ Checklist cấu phần an toàn — {catalog.labelVi}</CardTitle>
+            <p className="text-xs text-muted-foreground">Toàn bộ mục đánh dấu BẮT BUỘC phải được xác nhận trước khi lưu draft.</p>
+          </div>
+          <Badge tone={catalog.requiresGasTest ? 'warning' : 'neutral'}>{catalog.requiresGasTest ? 'Yêu cầu Gas Test' : 'Không yêu cầu Gas Test'}</Badge>
+        </CardHeader>
+        <CardContent className="grid gap-2 md:grid-cols-2">
+          {catalog.checklist.map((c) => (
+            <label key={c.id} className={`flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 text-sm transition-colors ${checked[c.id] ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-border hover:bg-muted/40'}`}>
+              <input type="checkbox" className="mt-0.5 accent-emerald-500" checked={!!checked[c.id]} onChange={(e) => setChecked((s) => ({ ...s, [c.id]: e.target.checked }))} />
+              <span>
+                {c.labelVi}
+                <span className="block text-[10px] uppercase tracking-wide text-muted-foreground">{c.labelEn}{c.required ? ' · BẮT BUỘC' : ''}</span>
+              </span>
+            </label>
+          ))}
+        </CardContent>
+      </Card>
+
+      <SimopsBanner permit={{ acknowledgedConflictIds: [] } as never} conflicts={previewConflicts} />
+
+      {error && <p className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">⛔ {error}</p>}
+
+      <div className="flex justify-end gap-2 pb-8">
+        <Button variant="ghost" onClick={() => navigate(-1)}>Hủy</Button>
+        <Button size="lg" variant="success" onClick={submit}>💾 Lưu nháp & mở hồ sơ</Button>
       </div>
-
-      {/* Tab Content */}
-      <div style={{ 
-        background: 'white',
-        padding: '24px',
-        borderRadius: '8px',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
-      }}>
-        {activeTab === 0 && (
-          <div>
-            <h3>Thông tin công việc</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-              <div>
-                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>Loại PTW *</label>
-                <select
-                  value={formData.type}
-                  onChange={(e) => handleInputChange('type', e.target.value)}
-                  style={{ width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ddd' }}
-                >
-                  {PERMIT_TYPES.map(t => (
-                    <option key={t.value} value={t.value}>{t.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>Khu vực (Deck)</label>
-                <select
-                  value={formData.deck}
-                  onChange={(e) => handleInputChange('deck', e.target.value)}
-                  style={{ width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ddd' }}
-                >
-                  {DECKS.map(d => (
-                    <option key={d} value={d}>{d}</option>
-                  ))}
-                </select>
-              </div>
-              <div style={{ gridColumn: '1 / -1' }}>
-                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>Tên công việc *</label>
-                <input
-                  type="text"
-                  value={formData.title}
-                  onChange={(e) => handleInputChange('title', e.target.value)}
-                  placeholder="Nhập tên công việc"
-                  style={{ width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ddd' }}
-                />
-              </div>
-              <div style={{ gridColumn: '1 / -1' }}>
-                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>Vị trí chi tiết *</label>
-                <input
-                  type="text"
-                  value={formData.location}
-                  onChange={(e) => handleInputChange('location', e.target.value)}
-                  placeholder="Ví dụ: Pump A-12, khu vực Process"
-                  style={{ width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ddd' }}
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>Tag thiết bị</label>
-                <input
-                  type="text"
-                  value={formData.locationTag}
-                  onChange={(e) => handleInputChange('locationTag', e.target.value)}
-                  placeholder="Ví dụ: P-101A"
-                  style={{ width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ddd' }}
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>Thời gian bắt đầu</label>
-                <input
-                  type="datetime-local"
-                  value={formData.startTime}
-                  onChange={(e) => handleInputChange('startTime', e.target.value)}
-                  style={{ width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ddd' }}
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>Thời gian kết thúc</label>
-                <input
-                  type="datetime-local"
-                  value={formData.endTime}
-                  onChange={(e) => handleInputChange('endTime', e.target.value)}
-                  style={{ width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ddd' }}
-                />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 1 && (
-          <div>
-            <h3>Nhân sự tham gia</h3>
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>Danh sách nhân viên</label>
-              <textarea
-                value={formData.workers.join('\n')}
-                onChange={(e) => handleInputChange('workers', e.target.value.split('\n').filter(w => w.trim()))}
-                placeholder="Nhập tên nhân viên, mỗi người một dòng"
-                rows={5}
-                style={{ width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ddd' }}
-              />
-            </div>
-
-            <h3>Thiết bị bảo hộ (PPE)</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
-              {['Helmet', 'Safety Glasses', 'Safety Shoes', 'Gloves', 'Ear Protection', 'Harness', 'Face Shield', 'Respirator', 'Coverall'].map(ppe => (
-                <label key={ppe} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <input
-                    type="checkbox"
-                    checked={formData.ppe.includes(ppe)}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        handleInputChange('ppe', [...formData.ppe, ppe]);
-                      } else {
-                        handleInputChange('ppe', formData.ppe.filter(p => p !== ppe));
-                      }
-                    }}
-                  />
-                  {ppe}
-                </label>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {activeTab === 2 && (
-          <div>
-            <h3>Job Safety Analysis (JSA)</h3>
-            <p style={{ color: '#f57c00', fontSize: '14px' }}>⚠️ Bắt buộc phải có ít nhất 1 mục JSA trước khi submit</p>
-            
-            <div style={{ 
-              background: '#f5f5f5', 
-              padding: '16px', 
-              borderRadius: '4px',
-              marginBottom: '20px'
-            }}>
-              <h4>Thêm mục JSA mới</h4>
-              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 2fr auto', gap: '10px', alignItems: 'end' }}>
-                <div>
-                  <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px' }}>Mối nguy</label>
-                  <input
-                    type="text"
-                    value={newJsaItem.hazard}
-                    onChange={(e) => setNewJsaItem(prev => ({ ...prev, hazard: e.target.value }))}
-                    placeholder="Ví dụ: Rơi từ độ cao"
-                    style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px' }}>Mức rủi ro</label>
-                  <select
-                    value={newJsaItem.riskLevel}
-                    onChange={(e) => setNewJsaItem(prev => ({ ...prev, riskLevel: e.target.value as any }))}
-                    style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
-                  >
-                    <option value="LOW">Thấp</option>
-                    <option value="MEDIUM">Trung bình</option>
-                    <option value="HIGH">Cao</option>
-                  </select>
-                </div>
-                <div>
-                  <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px' }}>Biện pháp kiểm soát</label>
-                  <input
-                    type="text"
-                    value={newJsaItem.controlMeasure}
-                    onChange={(e) => setNewJsaItem(prev => ({ ...prev, controlMeasure: e.target.value }))}
-                    placeholder="Ví dụ: Đeo dây an toàn"
-                    style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
-                  />
-                </div>
-                <button
-                  onClick={addJsaItem}
-                  style={{
-                    padding: '8px 16px',
-                    background: '#1a237e',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer'
-                  }}
-                >
-                  + Thêm
-                </button>
-              </div>
-            </div>
-
-            {formData.jsaItems.length > 0 && (
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ background: '#1a237e', color: 'white' }}>
-                    <th style={{ padding: '12px', textAlign: 'left' }}>Mối nguy</th>
-                    <th style={{ padding: '12px', textAlign: 'center' }}>Rủi ro</th>
-                    <th style={{ padding: '12px', textAlign: 'left' }}>Biện pháp kiểm soát</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {formData.jsaItems.map((item, idx) => (
-                    <tr key={item.id} style={{ background: idx % 2 === 0 ? '#f5f5f5' : 'white' }}>
-                      <td style={{ padding: '12px' }}>{item.hazard}</td>
-                      <td style={{ padding: '12px', textAlign: 'center' }}>
-                        <span style={{
-                          padding: '4px 8px',
-                          borderRadius: '4px',
-                          fontSize: '12px',
-                          fontWeight: 'bold',
-                          background: item.riskLevel === 'HIGH' ? '#ffebee' : item.riskLevel === 'MEDIUM' ? '#fff3e0' : '#e8f5e9',
-                          color: item.riskLevel === 'HIGH' ? '#c62828' : item.riskLevel === 'MEDIUM' ? '#ef6c00' : '#2e7d32'
-                        }}>
-                          {item.riskLevel}
-                        </span>
-                      </td>
-                      <td style={{ padding: '12px' }}>{item.controlMeasure}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        )}
-
-        {activeTab === 3 && (
-          <div>
-            <h3>Kiểm tra an toàn</h3>
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
-                <input
-                  type="checkbox"
-                  checked={formData.gasTestPassed}
-                  onChange={(e) => handleInputChange('gasTestPassed', e.target.checked)}
-                />
-                <strong>✓ Đã kiểm tra khí Gas (Gas Testing)</strong>
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
-                <input
-                  type="checkbox"
-                  checked={formData.electricalIsolated}
-                  onChange={(e) => handleInputChange('electricalIsolated', e.target.checked)}
-                />
-                <strong>✓ Đã cô lập nguồn điện</strong>
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
-                <input
-                  type="checkbox"
-                  checked={formData.pressureIsolated}
-                  onChange={(e) => handleInputChange('pressureIsolated', e.target.checked)}
-                />
-                <strong>✓ Đã cô lập áp suất</strong>
-              </label>
-            </div>
-
-            <h3>Biên bản cô lập (LOTO)</h3>
-            <div style={{ 
-              background: '#f5f5f5', 
-              padding: '16px', 
-              borderRadius: '4px',
-              marginBottom: '20px'
-            }}>
-              <h4>Thêm cô lập mới</h4>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: '10px', alignItems: 'end' }}>
-                <div>
-                  <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px' }}>Tag thiết bị</label>
-                  <input
-                    type="text"
-                    value={newIsolation.equipmentTag}
-                    onChange={(e) => setNewIsolation(prev => ({ ...prev, equipmentTag: e.target.value }))}
-                    placeholder="Ví dụ: V-101"
-                    style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px' }}>Loại cô lập</label>
-                  <select
-                    value={newIsolation.isolationType}
-                    onChange={(e) => setNewIsolation(prev => ({ ...prev, isolationType: e.target.value as any }))}
-                    style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
-                  >
-                    <option value="VALVE">Van</option>
-                    <option value="BREAKER">Aptomat</option>
-                    <option value="BLIND">Blind Flange</option>
-                    <option value="LOCKOUT">Lockout</option>
-                  </select>
-                </div>
-                <div>
-                  <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px' }}>Số khóa</label>
-                  <input
-                    type="text"
-                    value={newIsolation.lockNumber}
-                    onChange={(e) => setNewIsolation(prev => ({ ...prev, lockNumber: e.target.value }))}
-                    placeholder="Ví dụ: LOTO-001"
-                    style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ddd' }}
-                  />
-                </div>
-                <button
-                  onClick={addIsolation}
-                  style={{
-                    padding: '8px 16px',
-                    background: '#1a237e',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer'
-                  }}
-                >
-                  + Thêm
-                </button>
-              </div>
-            </div>
-
-            {formData.isolations.length > 0 && (
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ background: '#1a237e', color: 'white' }}>
-                    <th style={{ padding: '12px', textAlign: 'left' }}>Tag TB</th>
-                    <th style={{ padding: '12px', textAlign: 'left' }}>Loại</th>
-                    <th style={{ padding: '12px', textAlign: 'left' }}>Số khóa</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {formData.isolations.map((iso, idx) => (
-                    <tr key={iso.id} style={{ background: idx % 2 === 0 ? '#f5f5f5' : 'white' }}>
-                      <td style={{ padding: '12px' }}>{iso.equipmentTag}</td>
-                      <td style={{ padding: '12px' }}>{iso.isolationType}</td>
-                      <td style={{ padding: '12px' }}>{iso.lockNumber}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* PIN Modal */}
-      {showPinModal && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0,0,0,0.5)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1000
-        }}>
-          <div style={{
-            background: 'white',
-            padding: '30px',
-            borderRadius: '8px',
-            maxWidth: '400px',
-            width: '100%'
-          }}>
-            <h3 style={{ marginTop: 0 }}>Xác nhận chữ ký số</h3>
-            <p>Nhập mã PIN của bạn để {submitAction === 'SAVE' ? 'lưu' : 'gửi'} PTW</p>
-            <input
-              type="password"
-              value={pinCode}
-              onChange={(e) => setPinCode(e.target.value)}
-              maxLength={4}
-              placeholder="Nhập PIN"
-              style={{
-                width: '100%',
-                padding: '12px',
-                marginBottom: '20px',
-                borderRadius: '4px',
-                border: '1px solid #ddd',
-                fontSize: '18px',
-                textAlign: 'center',
-                boxSizing: 'border-box'
-              }}
-              autoFocus
-            />
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <button
-                onClick={() => {
-                  setShowPinModal(false);
-                  setPinCode('');
-                  setSubmitAction(null);
-                }}
-                style={{
-                  flex: 1,
-                  padding: '12px',
-                  background: '#757575',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer'
-                }}
-              >
-                Hủy
-              </button>
-              <button
-                onClick={() => {
-                  if (pinCode === currentUser?.pinCode) {
-                    const pinToSubmit = pinCode;
-                    setShowPinModal(false);
-                    setPinCode('');
-                    if (submitAction === 'SAVE') {
-                      void handleSave();
-                    } else if (submitAction === 'SUBMIT') {
-                      void handleSubmit(pinToSubmit);
-                    }
-                  } else {
-                    alert('PIN không đúng!');
-                  }
-                  setSubmitAction(null);
-                }}
-                style={{
-                  flex: 1,
-                  padding: '12px',
-                  background: '#1a237e',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer'
-                }}
-              >
-                Xác nhận
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
-};
+}

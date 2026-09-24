@@ -1,0 +1,109 @@
+@import "tailwindcss";
+
+/* ============================================================================
+   OFFSHORE PTW – Design Tokens
+   Theme 1: "Modern Industrial Cyber Dark" (mặc định)
+   Theme 2: "Zinc Premium Light"  -> thêm class .light trên <html>
+   ========================================================================= */
+
+@custom-variant light (&:where(.light, .light *));
+
+:root {
+  --background: oklch(0.13 0.012 260);
+  --foreground: oklch(0.96 0.01 250);
+  --card: oklch(0.17 0.012 260);
+  --card-foreground: oklch(0.96 0.01 250);
+  --muted: oklch(0.22 0.012 260);
+  --muted-foreground: oklch(0.68 0.015 255);
+  --border: oklch(0.28 0.012 260);
+  --input: oklch(0.24 0.012 260);
+  --ring: oklch(0.72 0.15 195);
+  --primary: oklch(0.72 0.15 195); /* cyan công nghiệp */
+  --primary-foreground: oklch(0.16 0.02 260);
+  --accent: oklch(0.65 0.19 259); /* electric blue */
+  --success: oklch(0.72 0.17 160); /* emerald */
+  --warning: oklch(0.78 0.16 75); /* amber */
+  --danger: oklch(0.62 0.22 20); /* crimson */
+}
+
+.light {
+  --background: oklch(0.985 0.002 250);
+  --foreground: oklch(0.22 0.015 260);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.22 0.015 260);
+  --muted: oklch(0.955 0.004 250);
+  --muted-foreground: oklch(0.48 0.015 260);
+  --border: oklch(0.89 0.006 260);
+  --input: oklch(0.93 0.005 260);
+  --ring: oklch(0.55 0.15 255);
+  --primary: oklch(0.5 0.14 255);
+  --primary-foreground: oklch(0.99 0 0);
+  --accent: oklch(0.55 0.18 259);
+  --success: oklch(0.55 0.14 160);
+  --warning: oklch(0.62 0.15 75);
+  --danger: oklch(0.55 0.2 20);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --radius-xl2: 0.875rem;
+}
+
+html,
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Hiệu ứng "đèn hổ phách nhấp nháy" cho bước đang chờ duyệt */
+@keyframes ptw-pulse-amber {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--warning) 55%, transparent); }
+  50% { box-shadow: 0 0 0 7px color-mix(in oklab, var(--warning) 0%, transparent); }
+}
+
+.ptw-pending-dot {
+  animation: ptw-pulse-amber 1.6s ease-in-out infinite;
+}
+
+/* Quét an toàn nền lưới công nghiệp */
+.ptw-grid-bg {
+  background-image:
+    linear-gradient(color-mix(in oklab, var(--border) 40%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklab, var(--border) 40%, transparent) 1px, transparent 1px);
+  background-size: 34px 34px;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--primary) 35%, transparent);
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--muted-foreground) 30%, transparent);
+  border-radius: 8px;
+}
+
+/* Hoạt ảnh Modal (tự định nghĩa, không phụ thuộc plugin tailwindcss-animate) */
+@keyframes ptw-modal-in {
+  from { opacity: 0; transform: scale(0.96) translateY(6px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+.ptw-modal-in { animation: ptw-modal-in 0.16s ease-out; }

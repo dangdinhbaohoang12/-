@@ -1,183 +1,65 @@
-import React, { useState } from 'react';
-import { usePermitStore, DEMO_USERS } from '../store/permitStore';
+/**
+ * ============================================================================
+ * LOGIN PAGE – Đăng nhập bằng Username + PIN điện tử (4–8 chữ số)
+ * ----------------------------------------------------------------------------
+ * Không có tài khoản demo; danh bạ tài khoản do OIM quản lý (UsersAdminPage).
+ * ==========================================================================*/
 
-interface LoginProps {
-  onLoginSuccess: () => void;
-}
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { usePtwStore } from '../store/ptwStore';
+import { Button, FieldRow, inputClass } from '../components/ui/primitives';
 
-export const LoginPage: React.FC<LoginProps> = ({ onLoginSuccess }) => {
-  const login = usePermitStore(state => state.login);
+export function LoginPage() {
+  const login = usePtwStore((s) => s.login);
+  const navigate = useNavigate();
   const [username, setUsername] = useState('');
-  const [pinCode, setPinCode] = useState('');
-  const [error, setError] = useState('');
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [showHint, setShowHint] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
-    
-    const success = login(username, pinCode);
-    if (success) {
-      onLoginSuccess();
-    } else {
-      setError('Tên đăng nhập hoặc PIN không đúng');
-    }
+    setError(null);
+    const res = login(username, pin);
+    if (!res.ok) { setError(res.error ?? 'Đăng nhập thất bại.'); return; }
+    navigate('/', { replace: true });
   };
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      background: 'linear-gradient(135deg, #1a237e 0%, #0d47a1 100%)',
-      padding: '20px'
-    }}>
-      <div style={{
-        background: 'white',
-        borderRadius: '8px',
-        padding: '40px',
-        maxWidth: '400px',
-        width: '100%',
-        boxShadow: '0 10px 40px rgba(0,0,0,0.3)'
-      }}>
-        <h1 style={{ 
-          margin: '0 0 10px 0', 
-          color: '#1a237e',
-          textAlign: 'center',
-          fontSize: '24px'
-        }}>
-          🛢️ OFFSHORE PTW
-        </h1>
-        <p style={{ 
-          margin: '0 0 30px 0', 
-          color: '#666',
-          textAlign: 'center',
-          fontSize: '14px'
-        }}>
-          Hệ thống quản lý giấy phép làm việc
-        </p>
-
-        <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: '20px' }}>
-            <label
-              htmlFor="login-username"
-              style={{ 
-                display: 'block', 
-                marginBottom: '8px',
-                fontWeight: 'bold',
-                color: '#333'
-              }}
-            >
-              Tên đăng nhập
-            </label>
-            <select
-              id="login-username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '12px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-                fontSize: '14px',
-                boxSizing: 'border-box'
-              }}
-              required
-            >
-              <option value="">-- Chọn tài khoản demo --</option>
-              {DEMO_USERS.map(user => (
-                <option key={user.id} value={user.username}>
-                  {user.fullName} ({user.username})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div style={{ marginBottom: '20px' }}>
-            <label
-              htmlFor="login-pin"
-              style={{ 
-                display: 'block', 
-                marginBottom: '8px',
-                fontWeight: 'bold',
-                color: '#333'
-              }}
-            >
-              Mã PIN
-            </label>
-            <input
-              id="login-pin"
-              type="password"
-              value={pinCode}
-              onChange={(e) => setPinCode(e.target.value)}
-              placeholder="Nhập mã PIN (ví dụ: 0001)"
-              maxLength={4}
-              style={{
-                width: '100%',
-                padding: '12px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-                fontSize: '14px',
-                boxSizing: 'border-box'
-              }}
-              required
-            />
-          </div>
-
-          {error && (
-            <div
-              role="alert"
-              style={{
-                background: '#ffebee',
-                color: '#c62828',
-                padding: '10px',
-                borderRadius: '4px',
-                marginBottom: '20px',
-                fontSize: '14px'
-              }}
-            >
-              {error}
+    <div className="flex min-h-screen items-center justify-center bg-background ptw-grid-bg p-6">
+      <div className="w-full max-w-md">
+        <div className="mb-6 text-center">
+          <p className="text-3xl font-black tracking-tight">🛢️ OFFSHORE <span className="text-primary">PTW</span></p>
+          <p className="mt-1 text-[11px] uppercase tracking-[0.3em] text-muted-foreground">Safety-Critical Permit To Work System</p>
+          <p className="mt-1 text-xs text-muted-foreground">Giàn MT1 · Biển Đông POC — chỉ thiết bị được ủy quyền trong LAN giàn</p>
+        </div>
+        <form onSubmit={submit} className="space-y-4 rounded-2xl border border-border bg-card p-6 shadow-2xl">
+          <FieldRow label="Username">
+            <input autoFocus className={inputClass} value={username} onChange={(e) => setUsername(e.target.value)} placeholder="vd: tranvanhung" autoComplete="username" />
+          </FieldRow>
+          <FieldRow label="Mã PIN điện tử" hint="4–8 chữ số">
+            <input type="password" inputMode="numeric" maxLength={8} className={inputClass} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} autoComplete="current-password" />
+          </FieldRow>
+          {error && <p className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">⛔ {error}</p>}
+          <Button type="submit" size="lg" className="w-full">🔐 Xác thực & vào ca trực</Button>
+          <button type="button" onClick={() => setShowHint((v) => !v)} className="w-full text-center text-[10px] text-muted-foreground underline-offset-2 hover:underline">
+            {showHint ? 'Ẩn danh sách tài khoản' : 'Quên tài khoản? Xem danh bạ được OIM phê chuẩn'}
+          </button>
+          {showHint && (
+            <div className="max-h-44 overflow-y-auto rounded-lg border border-border bg-muted/40 p-3 font-mono text-[10px] leading-5 text-muted-foreground">
+              <p><b className="text-foreground">tranvanhung</b> — OIM (Giàn trưởng)</p>
+              <p><b className="text-foreground">phamvankhoa</b> — Deputy OIM</p>
+              <p><b className="text-foreground">lethiquyen</b> — FPS</p>
+              <p><b className="text-foreground">nguyenvana</b> — Line Supervisor</p>
+              <p><b className="text-foreground">hoangminhtu</b> — Permit Applicant</p>
+              <p><b className="text-foreground">vusithanh</b> — PTW Controller</p>
+              <p><b className="text-foreground">dangbaocan</b> — HSE Officer</p>
+              <p className="mt-1 italic">PIN cá nhân do Giàn trưởng cấp khi tạo tài khoản (không hiển thị trên hệ thống).</p>
             </div>
           )}
-
-          <button
-            type="submit"
-            style={{
-              width: '100%',
-              padding: '14px',
-              background: '#1a237e',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              fontSize: '16px',
-              fontWeight: 'bold',
-              cursor: 'pointer',
-              transition: 'background 0.3s'
-            }}
-            onMouseOver={(e) => e.currentTarget.style.background = '#0d47a1'}
-            onMouseOut={(e) => e.currentTarget.style.background = '#1a237e'}
-          >
-            Đăng nhập
-          </button>
         </form>
-
-        <div style={{
-          marginTop: '30px',
-          padding: '15px',
-          background: '#f5f5f5',
-          borderRadius: '4px',
-          fontSize: '12px'
-        }}>
-          <strong>Tài khoản demo:</strong>
-          <ul style={{ margin: '10px 0 0 0', paddingLeft: '20px' }}>
-            {DEMO_USERS.map(user => (
-              <li key={user.id}>
-                {user.username} / PIN: {user.pinCode} - {user.role}
-              </li>
-            ))}
-          </ul>
-        </div>
       </div>
     </div>
   );
-};
+}

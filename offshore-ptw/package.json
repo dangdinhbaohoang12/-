@@ -1,45 +1,40 @@
 {
   "name": "offshore-ptw",
-  "version": "1.0.0",
-  "main": "index.js",
-  "scripts": {
-    "test": "vitest run",
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview"
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "description": "OFFSHORE PTW – Hệ thống quản lý giấy phép làm việc trên giàn khoan dầu khí (Safety-Critical Permit To Work Management System)",
+  "engines": {
+    "node": ">=20"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
   "dependencies": {
-    "@emotion/react": "^11.14.0",
-    "@emotion/styled": "^11.14.1",
-    "@mui/icons-material": "^9.4.0",
-    "@mui/material": "^9.4.0",
+    "clsx": "^2.1.1",
     "crypto-js": "^4.2.0",
-    "dexie": "^4.4.6",
-    "leaflet": "^1.9.4",
     "qrcode.react": "^4.2.0",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
-    "react-leaflet": "^5.0.0",
-    "react-router-dom": "^7.18.4",
-    "uuid": "^14.0.2",
-    "zustand": "^5.0.15"
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.1.1",
+    "tailwind-merge": "^3.3.1",
+    "zustand": "^5.0.5"
   },
   "devDependencies": {
-    "@testing-library/react": "^16.3.3",
+    "@tailwindcss/vite": "^4.1.8",
     "@types/crypto-js": "^4.2.2",
-    "@types/leaflet": "^1.9.22",
-    "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0",
-    "@types/uuid": "^10.0.0",
-    "@vitejs/plugin-react": "^6.1.1",
-    "happy-dom": "^20.14.5",
-    "jsdom": "^29.1.1",
-    "typescript": "^7.0.2",
-    "vite": "^8.3.0",
-    "vitest": "^4.1.11"
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.5.0",
+    "tailwindcss": "^4.1.8",
+    "typescript": "~5.8.3",
+    "vite": "^6.3.5",
+    "vitest": "^3.2.2"
   }
 }
