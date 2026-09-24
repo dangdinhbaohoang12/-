@@ -1287,7 +1287,7 @@ async function createUserAccount(user: any, body: any): Promise<void> {
       action: 'Tạo tài khoản người dùng ' + String(created.username),
       from_status: null,
       to_status: null,
-      device_ip: clientIp(user),
+      device_ip: 'SERVER',
       payload: { targetUserId: created.id, targetRole: created.role },
       occurred_at: nowIso(),
     }),
