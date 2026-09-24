@@ -71,7 +71,7 @@ export function PermitListPage() {
                       <td className="py-2.5 pr-3 font-mono font-bold">{p.permitNumber}<span className="ml-1 text-[9px] font-normal text-muted-foreground">Rev {p.revisionNo}</span></td>
                       <td className="py-2.5 pr-3 text-xs">{p.permitType.replace(/_/g, ' ')}</td>
                       <td className="py-2.5 pr-3 text-xs">{p.areaCode} · <span className="font-mono">{p.equipmentTag}</span></td>
-                      <td className="py-2.5 pr-3 font-mono text-[11px] text-muted-foreground">{formatTimestamp(p.plannedStart)} → {formatTimestamp(p.plannedEnd)}</td>
+                      <td className="py-2.5 pr-3 font-mono text-[11px] text-muted-foreground">{formatTimestamp(p.plannedStart)} → {formatTimestamp(p.validUntil ?? p.plannedEnd)}</td>
                       <td className="py-2.5 pr-3"><Badge tone={RISK_TONE[p.riskLevel]}>{p.riskLevel}</Badge></td>
                       <td className="py-2.5"><span className={`inline-flex items-center gap-2 text-xs font-bold ${meta.text}`}><span className={`h-2 w-2 rounded-full ${meta.dot}`} />{STATUS_LABELS_EN[p.status]}</span></td>
                     </tr>
