@@ -36,10 +36,10 @@ export function SimopsBanner({ permit, conflicts }: { permit: Permit; conflicts:
 
   const canAck = !!currentUser && ['FPS', 'DEPUTY_OIM', 'OIM'].includes(currentUser.role);
 
-  const submitAck = () => {
+  const submitAck = async () => {
     setError(null);
     if (!target) return;
-    const res = acknowledge(permit.id, target.conflictId, note.trim(), pin);
+    const res = await acknowledge(permit.id, target.conflictId, note.trim(), pin);
     if (!res.ok) { setError(res.error ?? 'Không ghi nhận được.'); return; }
     setTarget(null); setNote(''); setPin('');
   };
