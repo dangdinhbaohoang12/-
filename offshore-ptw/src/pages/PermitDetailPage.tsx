@@ -111,12 +111,12 @@ export function PermitDetailPage() {
   const locked = !['DRAFT', 'RETURNED'].includes(permit.status);
   const approverOf = (userId?: string) => users.find((u) => u.id === userId);
 
-  const runAction = async (pin: string, comment: string): Promise<boolean> => {
-    if (!signoff) return false;
+  const runAction = async (pin: string, comment: string): Promise<{ ok: boolean; error?: string }> => {
+    if (!signoff) return { ok: false, error: 'Không có hành động nào đang chờ ký.' };
     const res = await perform(signoff.action, { id: permit.id }, pin, comment);
-    if (!res.ok) return false;
+    if (!res.ok) return { ok: false, error: res.error };
     setSignoff(null);
-    return true;
+    return { ok: true };
   };
 
   return (
@@ -247,22 +247,29 @@ function DetailField({ label, value }: { label: string; value: React.ReactNode }
 function SignoffModal({ pending, onClose, onConfirm, permitNumber }: {
   pending: PendingAction | null;
   onClose: () => void;
-  onConfirm: (pin: string, comment: string) => Promise<boolean>;
+  onConfirm: (pin: string, comment: string) => Promise<{ ok: boolean; error?: string }>;
   permitNumber: string;
 }) {
   const currentUser = usePtwStore((s) => s.currentUser);
   const [pin, setPin] = useState('');
   const [comment, setComment] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const needsComment = !!pending && (pending.action === 'REJECT' || pending.action === 'RETURN_FOR_CLARIFICATION' || pending.action === 'SUSPEND' || pending.action === 'CREATE_REVISION');
 
   const confirm = async () => {
+    if (submitting) return;
     setError(null);
     if (needsComment && !comment.trim()) { setError('Hành động này bắt buộc nhập lý do / bình luận.'); return; }
-    const ok = await onConfirm(pin, comment.trim());
-    if (!ok) return;
-    setPin(''); setComment('');
-    onClose();
+    setSubmitting(true);
+    try {
+      const res = await onConfirm(pin, comment.trim());
+      if (!res.ok) { setError(res.error ?? 'Ký/ghi nhận thất bại – kiểm tra PIN, quyền hạn hoặc dữ liệu đã bị thay đổi rồi thử lại.'); return; }
+      setPin(''); setComment('');
+      onClose();
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -279,8 +286,8 @@ function SignoffModal({ pending, onClose, onConfirm, permitNumber }: {
         </FieldRow>
         {error && <p className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">⛔ {error}</p>}
         <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>Hủy</Button>
-          <Button variant={pending?.tone === 'danger' || pending?.tone === 'critical' ? 'danger' : 'success'} onClick={confirm} disabled={!pin}>🖊 Ký & xác nhận</Button>
+          <Button variant="ghost" onClick={onClose} disabled={submitting}>Hủy</Button>
+          <Button variant={pending?.tone === 'danger' || pending?.tone === 'critical' ? 'danger' : 'success'} onClick={confirm} disabled={!pin || submitting}>{submitting ? 'Đang xử lý…' : '🖊 Ký & xác nhận'}</Button>
         </div>
       </div>
     </Modal>

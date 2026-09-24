@@ -23,7 +23,9 @@ async function request<T>(method: 'GET' | 'POST', body?: Record<string, unknown>
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || payload.ok === false) {
-    throw new Error(payload.error ?? 'Yêu cầu máy chủ thất bại.');
+    const error = new Error(payload.error ?? 'Yêu cầu máy chủ thất bại.');
+    (error as { status?: number }).status = response.status;
+    throw error;
   }
   return payload as T;
 }

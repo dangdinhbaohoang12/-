@@ -106,15 +106,18 @@ export function AppLayout() {
             <button
               type="button"
               onClick={async () => {
-                try {
-                  await logout();
-                } catch {
-                  // Local session state is already cleared by the store; the
-                  // server call failing just means the cookie may still be
-                  // valid until it expires – still navigate to /login.
-                } finally {
-                  navigate('/login');
+                const res = await logout();
+                if (!res.ok) {
+                  // The server-side session cookie may still be valid; retry
+                  // once before giving up so refreshing the login page can't
+                  // silently restore an authenticated session.
+                  const retry = await logout();
+                  if (!retry.ok) {
+                    window.alert('Đăng xuất phía máy chủ thất bại. Vui lòng thử lại hoặc đóng trình duyệt để đảm bảo phiên được kết thúc.');
+                    return;
+                  }
                 }
+                navigate('/login');
               }}
               className="rounded-lg bg-muted px-3 py-1 text-xs font-semibold hover:bg-border"
             >

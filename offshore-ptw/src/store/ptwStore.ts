@@ -34,7 +34,7 @@ interface PtwState {
   hydrate: () => Promise<void>;
   login: (username: string, pin: string, deviceIp?: string) => Promise<ActionResult & { mustChangePin?: boolean }>;
   changeOwnPin: (newPin: string, currentPin: string) => Promise<ActionResult>;
-  logout: () => Promise<void>;
+  logout: () => Promise<ActionResult>;
 
   createUserAccount: (
     input: Pick<UserAccount, 'username' | 'fullName' | 'role' | 'platformCode'> & {
@@ -95,22 +95,44 @@ interface PtwState {
   setSimulatedRole: (role: Role | null) => void;
 }
 
-function applyState(set: (state: Partial<PtwState>) => void, state: {
-  permits: Permit[];
-  users: UserAccount[];
-  currentUser: UserAccount | null;
-  notifications: AppNotification[];
-}): void {
+function failed(error: unknown): ActionResult {
+  return { ok: false, error: error instanceof Error ? error.message : 'Yêu cầu thất bại.' };
+}
+
+function isAuthError(error: unknown): boolean {
+  const status = Number((error as { status?: number } | null)?.status);
+  return status === 401 || status === 403;
+}
+
+/**
+ * Every server round-trip that replaces the full permits/users/notifications
+ * snapshot is tagged with a monotonically increasing token. If a slower
+ * request resolves after a newer one already landed, its (stale) snapshot is
+ * dropped instead of reverting the UI to older data.
+ */
+let latestStateToken = 0;
+function nextStateToken(): number {
+  latestStateToken += 1;
+  return latestStateToken;
+}
+
+function applyState(
+  set: (state: Partial<PtwState>) => void,
+  token: number,
+  state: {
+    permits: Permit[];
+    users: UserAccount[];
+    currentUser: UserAccount | null;
+    notifications: AppNotification[];
+  },
+): void {
+  if (token !== latestStateToken) return;
   set({
     permits: state.permits,
     users: state.users,
     currentUser: state.currentUser,
     notifications: state.notifications,
   });
-}
-
-function failed(error: unknown): ActionResult {
-  return { ok: false, error: error instanceof Error ? error.message : 'Yêu cầu thất bại.' };
 }
 
 export const usePtwStore = create<PtwState>((set, get) => ({
@@ -124,11 +146,12 @@ export const usePtwStore = create<PtwState>((set, get) => ({
   authReady: false,
 
   hydrate: async () => {
+    const token = nextStateToken();
     try {
       const state = await getState();
       // A concurrent login may have completed while this GET was in flight;
       // don't let the stale unauthenticated hydration response clobber it.
-      if (!get().currentUser) applyState(set, state);
+      if (!get().currentUser) applyState(set, token, state);
     } catch {
       // Expired session / network outage: degrade to the login redirect
       // handled by RequireAuth instead of rejecting on every page load.
@@ -138,6 +161,7 @@ export const usePtwStore = create<PtwState>((set, get) => ({
   },
 
   login: async (username, pin) => {
+    const token = nextStateToken();
     try {
       const result = await post<{
         ok: true;
@@ -149,7 +173,7 @@ export const usePtwStore = create<PtwState>((set, get) => ({
           notifications: AppNotification[];
         };
       }>('LOGIN', { username, pin });
-      applyState(set, result.state);
+      applyState(set, token, result.state);
       set({ selectedPermitId: null, simulatedRole: null });
       return { ok: true, mustChangePin: result.mustChangePin };
     } catch (error) {
@@ -158,9 +182,10 @@ export const usePtwStore = create<PtwState>((set, get) => ({
   },
 
   changeOwnPin: async (newPin, currentPin) => {
+    const token = nextStateToken();
     try {
       const result = await post<{ state: RemoteState }>('CHANGE_OWN_PIN', { newPin, currentPin });
-      applyState(set, result.state);
+      applyState(set, token, result.state);
       return { ok: true };
     } catch (error) {
       return failed(error);
@@ -168,7 +193,17 @@ export const usePtwStore = create<PtwState>((set, get) => ({
   },
 
   logout: async () => {
-    try { await post('LOGOUT'); } finally {
+    const token = nextStateToken();
+    try {
+      await post('LOGOUT');
+    } catch (error) {
+      // The HttpOnly session cookie is only invalidated by a successful
+      // server round-trip. If the request failed (network error or the
+      // server rejected it), keep the local authenticated state instead of
+      // treating logout as complete – the caller is expected to retry.
+      return failed(error);
+    }
+    if (token === latestStateToken) {
       set({
         currentUser: null,
         permits: [],
@@ -179,12 +214,14 @@ export const usePtwStore = create<PtwState>((set, get) => ({
         sessionDeviceIp: null,
       });
     }
+    return { ok: true };
   },
 
   createUserAccount: async (input, operatorPin) => {
+    const token = nextStateToken();
     try {
       const result = await post<{ state: RemoteState }>('CREATE_USER', { input, operatorPin });
-      applyState(set, result.state);
+      applyState(set, token, result.state);
       const created = result.state.users.find((u) => u.username === input.username);
       return { ok: true, user: created };
     } catch (error) {
@@ -195,9 +232,10 @@ export const usePtwStore = create<PtwState>((set, get) => ({
   createUser: async (input, operatorPin) => get().createUserAccount(input, operatorPin),
 
   toggleUserActive: async (userId, active, operatorPin) => {
+    const token = nextStateToken();
     try {
       const result = await post<{ state: RemoteState }>('TOGGLE_USER_ACTIVE', { userId, active, operatorPin });
-      applyState(set, result.state);
+      applyState(set, token, result.state);
       return { ok: true };
     } catch (error) {
       return failed(error);
@@ -205,9 +243,10 @@ export const usePtwStore = create<PtwState>((set, get) => ({
   },
 
   changePin: async (userId, newPin, operatorPin) => {
+    const token = nextStateToken();
     try {
       const result = await post<{ state: RemoteState }>('CHANGE_USER_PIN', { userId, newPin, operatorPin });
-      applyState(set, result.state);
+      applyState(set, token, result.state);
       return { ok: true };
     } catch (error) {
       return failed(error);
@@ -215,12 +254,13 @@ export const usePtwStore = create<PtwState>((set, get) => ({
   },
 
   createDraftPermit: async (data, operatorPin) => {
+    const token = nextStateToken();
     try {
       const result = await post<{
         state: RemoteState;
         permitId: string;
       }>('CREATE_DRAFT', { data, pin: operatorPin });
-      applyState(set, result.state);
+      applyState(set, token, result.state);
       const permit = result.state.permits.find((p) => p.id === result.permitId);
       return { ok: true, permitNumber: permit?.permitNumber, permit };
     } catch (error) {
@@ -231,9 +271,10 @@ export const usePtwStore = create<PtwState>((set, get) => ({
   createDraft: async (data, operatorPin) => get().createDraftPermit(data, operatorPin),
 
   updateDraftPermit: async (permitId, patch) => {
+    const token = nextStateToken();
     try {
       const result = await post<{ state: RemoteState }>('UPDATE_DRAFT', { permitId, patch });
-      applyState(set, result.state);
+      applyState(set, token, result.state);
       return { ok: true };
     } catch (error) {
       return failed(error);
@@ -241,6 +282,7 @@ export const usePtwStore = create<PtwState>((set, get) => ({
   },
 
   runTransition: async (permitId, kind, pin, comment) => {
+    const token = nextStateToken();
     try {
       const result = await post<{ state: RemoteState }>('TRANSITION', {
         permitId,
@@ -248,7 +290,7 @@ export const usePtwStore = create<PtwState>((set, get) => ({
         pin,
         comment,
       });
-      applyState(set, result.state);
+      applyState(set, token, result.state);
       return { ok: true };
     } catch (error) {
       return failed(error);
@@ -263,13 +305,14 @@ export const usePtwStore = create<PtwState>((set, get) => ({
   },
 
   addGasTest: async (permitId, record, pin) => {
+    const token = nextStateToken();
     try {
       const result = await post<{ state: RemoteState }>('ADD_GAS_TEST', {
         permitId,
         record,
         pin,
       });
-      applyState(set, result.state);
+      applyState(set, token, result.state);
       return { ok: true };
     } catch (error) {
       return failed(error);
@@ -277,6 +320,7 @@ export const usePtwStore = create<PtwState>((set, get) => ({
   },
 
   acknowledgeSimopsConflict: async (permitId, conflictId, decisionNote, pin) => {
+    const token = nextStateToken();
     try {
       const result = await post<{ state: RemoteState }>('ACK_SIMOPS', {
         permitId,
@@ -284,7 +328,7 @@ export const usePtwStore = create<PtwState>((set, get) => ({
         decisionNote,
         pin,
       });
-      applyState(set, result.state);
+      applyState(set, token, result.state);
       return { ok: true };
     } catch (error) {
       return failed(error);
@@ -292,13 +336,14 @@ export const usePtwStore = create<PtwState>((set, get) => ({
   },
 
   requestRevision: async (permitId, reason, pin) => {
+    const token = nextStateToken();
     try {
       const result = await post<{ state: RemoteState; newPermitId: string }>('REQUEST_REVISION', {
         permitId,
         reason,
         pin,
       });
-      applyState(set, result.state);
+      applyState(set, token, result.state);
       return { ok: true, newPermitId: result.newPermitId };
     } catch (error) {
       return failed(error);
@@ -308,9 +353,10 @@ export const usePtwStore = create<PtwState>((set, get) => ({
   selectPermit: (permitId) => set({ selectedPermitId: permitId }),
 
   markNotificationRead: async (id) => {
+    const token = nextStateToken();
     try {
       const result = await post<{ state: RemoteState }>('MARK_NOTIFICATION_READ', { id });
-      applyState(set, result.state);
+      applyState(set, token, result.state);
       return { ok: true };
     } catch (error) {
       return failed(error);
@@ -318,11 +364,26 @@ export const usePtwStore = create<PtwState>((set, get) => ({
   },
 
   refreshExpiries: async () => {
+    const token = nextStateToken();
     try {
       const result = await post<{ state: RemoteState }>('REFRESH_EXPIRIES');
-      applyState(set, result.state);
-    } catch {
-      // Keep the last authoritative state if a background refresh fails.
+      applyState(set, token, result.state);
+    } catch (error) {
+      // A transient network hiccup shouldn't log the user out, but an
+      // authentication failure means the session actually expired/was
+      // invalidated server-side – reflect that instead of continuing to
+      // render permits/notifications as if still authenticated.
+      if (isAuthError(error) && token === latestStateToken) {
+        set({
+          currentUser: null,
+          permits: [],
+          users: [],
+          notifications: [],
+          selectedPermitId: null,
+          simulatedRole: null,
+          sessionDeviceIp: null,
+        });
+      }
     }
   },
 

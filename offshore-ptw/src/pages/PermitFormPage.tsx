@@ -43,6 +43,7 @@ export function PermitFormPage() {
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   if (!currentUser) return null;
   const catalog = PERMIT_TYPE_CATALOG_MAP[permitType];
@@ -63,6 +64,7 @@ export function PermitFormPage() {
   }, [start, end, areaCode, platform, permits, nextNumber]);
 
   const submit = async () => {
+    if (submitting) return;
     setError(null);
     if (!description.trim() || description.trim().length < 20) { setError('Nội dung công việc tối thiểu 20 ký tự.'); return; }
     if (!reason.trim()) { setError('Lý do phát sinh công việc là bắt buộc.'); return; }
@@ -71,23 +73,28 @@ export function PermitFormPage() {
     if (unchecked.length > 0) { setError(`Còn ${unchecked.length} cấu phần an toàn BẮT BUỘC chưa xác nhận.`); return; }
     if (!pin.trim()) { setError('PIN điện tử xác thực người khởi tạo là bắt buộc.'); return; }
     const currentArea = areas.find((a) => a.code === areaCode);
-    const res = await createDraft(
-      {
-        permitType,
-        areaId: currentArea?.id,
-        equipmentTag: equipmentTag || 'N/A',
-        workDescription: description.trim(), reasonForIssuing: reason.trim(),
-        plannedStart: new Date(start).toISOString(), plannedEnd: new Date(end).toISOString(),
-        riskLevel: risk,
-        riskLevelAssessed: risk,
-        areaCode,
-        platformCode: platform,
-        safetyChecklistConfirmed: catalog.checklist.map((c) => ({ itemId: c.id, labelVi: c.labelVi, confirmed: !!checked[c.id] })),
-      },
-      pin,
-    );
-    if (!res.ok) { setError(res.error ?? 'Không tạo được draft.'); return; }
-    navigate(`/permits/${res.permit!.id}`);
+    setSubmitting(true);
+    try {
+      const res = await createDraft(
+        {
+          permitType,
+          areaId: currentArea?.id,
+          equipmentTag: equipmentTag || 'N/A',
+          workDescription: description.trim(), reasonForIssuing: reason.trim(),
+          plannedStart: new Date(start).toISOString(), plannedEnd: new Date(end).toISOString(),
+          riskLevel: risk,
+          riskLevelAssessed: risk,
+          areaCode,
+          platformCode: platform,
+          safetyChecklistConfirmed: catalog.checklist.map((c) => ({ itemId: c.id, labelVi: c.labelVi, confirmed: !!checked[c.id] })),
+        },
+        pin,
+      );
+      if (!res.ok) { setError(res.error ?? 'Không tạo được draft.'); return; }
+      navigate(`/permits/${res.permit!.id}`);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -180,8 +187,8 @@ export function PermitFormPage() {
       {error && <p className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">⛔ {error}</p>}
 
       <div className="flex justify-end gap-2 pb-8">
-        <Button variant="ghost" onClick={() => navigate(-1)}>Hủy</Button>
-        <Button size="lg" variant="success" onClick={submit}>💾 Lưu nháp & mở hồ sơ</Button>
+        <Button variant="ghost" onClick={() => navigate(-1)} disabled={submitting}>Hủy</Button>
+        <Button size="lg" variant="success" onClick={submit} disabled={submitting}>{submitting ? 'Đang lưu…' : '💾 Lưu nháp & mở hồ sơ'}</Button>
       </div>
     </div>
   );

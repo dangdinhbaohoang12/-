@@ -206,5 +206,15 @@ create trigger ptw_audit_no_update_delete
 before update or delete on public.ptw_audit_log
 for each row execute function public.ptw_deny_audit_mutation();
 
+-- A row-level BEFORE trigger never fires for TRUNCATE, so a role with the
+-- TRUNCATE privilege could still wipe the append-only audit log. Deny it
+-- with a statement-level trigger and revoke the privilege outright.
+drop trigger if exists ptw_audit_no_truncate on public.ptw_audit_log;
+create trigger ptw_audit_no_truncate
+before truncate on public.ptw_audit_log
+for each statement execute function public.ptw_deny_audit_mutation();
+
+revoke truncate on table public.ptw_audit_log from public, anon, authenticated, service_role;
+
 revoke all on function public.ptw_apply_permit_transaction(jsonb, jsonb, jsonb) from public, anon, authenticated;
 grant execute on function public.ptw_apply_permit_transaction(jsonb, jsonb, jsonb) to service_role;

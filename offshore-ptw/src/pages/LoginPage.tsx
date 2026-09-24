@@ -17,13 +17,20 @@ export function LoginPage() {
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [showHint, setShowHint] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
     setError(null);
-    const res = await login(username, pin);
-    if (!res.ok) { setError(res.error ?? 'Đăng nhập thất bại.'); return; }
-    navigate('/', { replace: true });
+    setSubmitting(true);
+    try {
+      const res = await login(username, pin);
+      if (!res.ok) { setError(res.error ?? 'Đăng nhập thất bại.'); return; }
+      navigate('/', { replace: true });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -42,9 +49,9 @@ export function LoginPage() {
             <input type="password" inputMode="numeric" maxLength={8} className={inputClass} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} autoComplete="current-password" />
           </FieldRow>
           {error && <p className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">⛔ {error}</p>}
-          <Button type="submit" size="lg" className="w-full">🔐 Xác thực & vào ca trực</Button>
+          <Button type="submit" size="lg" className="w-full" disabled={submitting}>{submitting ? 'Đang xác thực…' : '🔐 Xác thực & vào ca trực'}</Button>
           <button type="button" onClick={() => setShowHint((v) => !v)} className="w-full text-center text-[10px] text-muted-foreground underline-offset-2 hover:underline">
-            {showHint ? 'Ẩn danh sách tài khoản' : 'Quên tài khoản? Xem danh bạ được OIM phê chuẩn'}
+            {showHint ? 'Ẩn hướng dẫn liên hệ OIM' : 'Quên tài khoản? Xem hướng dẫn liên hệ OIM'}
           </button>
           {showHint && (
             <div className="rounded-lg border border-border bg-muted/40 p-3 text-[10px] leading-5 text-muted-foreground">
