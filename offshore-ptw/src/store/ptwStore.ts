@@ -16,6 +16,7 @@ import {
   type Action,
   type ActionResult,
   type DraftPermitInput,
+  type RemoteState,
 } from './apiClient';
 
 export type { Action, ActionResult };
@@ -153,7 +154,7 @@ export const usePtwStore = create<PtwState>((set, get) => ({
 
   changeOwnPin: async (newPin, currentPin) => {
     try {
-      const result = await post<{ state: PtwState['RemoteState'] }>('CHANGE_OWN_PIN', { newPin, currentPin });
+      const result = await post<{ state: RemoteState }>('CHANGE_OWN_PIN', { newPin, currentPin });
       applyState(set, result.state);
       return { ok: true };
     } catch (error) {
@@ -177,7 +178,7 @@ export const usePtwStore = create<PtwState>((set, get) => ({
 
   createUserAccount: async (input, operatorPin) => {
     try {
-      const result = await post<{ state: PtwState['RemoteState'] }>('CREATE_USER', { input, operatorPin });
+      const result = await post<{ state: RemoteState }>('CREATE_USER', { input, operatorPin });
       applyState(set, result.state);
       const created = result.state.users.find((u) => u.username === input.username);
       return { ok: true, user: created };
@@ -190,7 +191,7 @@ export const usePtwStore = create<PtwState>((set, get) => ({
 
   toggleUserActive: async (userId, active, operatorPin) => {
     try {
-      const result = await post<{ state: PtwState['RemoteState'] }>('TOGGLE_USER_ACTIVE', { userId, active, operatorPin });
+      const result = await post<{ state: RemoteState }>('TOGGLE_USER_ACTIVE', { userId, active, operatorPin });
       applyState(set, result.state);
       return { ok: true };
     } catch (error) {
@@ -200,7 +201,7 @@ export const usePtwStore = create<PtwState>((set, get) => ({
 
   changePin: async (userId, newPin, operatorPin) => {
     try {
-      const result = await post<{ state: PtwState['RemoteState'] }>('CHANGE_USER_PIN', { userId, newPin, operatorPin });
+      const result = await post<{ state: RemoteState }>('CHANGE_USER_PIN', { userId, newPin, operatorPin });
       applyState(set, result.state);
       return { ok: true };
     } catch (error) {
@@ -211,7 +212,7 @@ export const usePtwStore = create<PtwState>((set, get) => ({
   createDraftPermit: async (data, operatorPin) => {
     try {
       const result = await post<{
-        state: PtwState['RemoteState'];
+        state: RemoteState;
         permitId: string;
       }>('CREATE_DRAFT', { data, pin: operatorPin });
       applyState(set, result.state);
@@ -226,7 +227,7 @@ export const usePtwStore = create<PtwState>((set, get) => ({
 
   updateDraftPermit: async (permitId, patch) => {
     try {
-      const result = await post<{ state: PtwState['RemoteState'] }>('UPDATE_DRAFT', { permitId, patch });
+      const result = await post<{ state: RemoteState }>('UPDATE_DRAFT', { permitId, patch });
       applyState(set, result.state);
       return { ok: true };
     } catch (error) {
@@ -236,7 +237,7 @@ export const usePtwStore = create<PtwState>((set, get) => ({
 
   runTransition: async (permitId, kind, pin, comment) => {
     try {
-      const result = await post<{ state: PtwState['RemoteState'] }>('TRANSITION', {
+      const result = await post<{ state: RemoteState }>('TRANSITION', {
         permitId,
         kind,
         pin,
@@ -258,7 +259,7 @@ export const usePtwStore = create<PtwState>((set, get) => ({
 
   addGasTest: async (permitId, record, pin) => {
     try {
-      const result = await post<{ state: PtwState['RemoteState'] }>('ADD_GAS_TEST', {
+      const result = await post<{ state: RemoteState }>('ADD_GAS_TEST', {
         permitId,
         record,
         pin,
@@ -272,7 +273,7 @@ export const usePtwStore = create<PtwState>((set, get) => ({
 
   acknowledgeSimopsConflict: async (permitId, conflictId, decisionNote, pin) => {
     try {
-      const result = await post<{ state: PtwState['RemoteState'] }>('ACK_SIMOPS', {
+      const result = await post<{ state: RemoteState }>('ACK_SIMOPS', {
         permitId,
         conflictId,
         decisionNote,
@@ -287,7 +288,7 @@ export const usePtwStore = create<PtwState>((set, get) => ({
 
   requestRevision: async (permitId, reason, pin) => {
     try {
-      const result = await post<{ state: PtwState['RemoteState']; newPermitId: string }>('REQUEST_REVISION', {
+      const result = await post<{ state: RemoteState; newPermitId: string }>('REQUEST_REVISION', {
         permitId,
         reason,
         pin,
@@ -303,7 +304,7 @@ export const usePtwStore = create<PtwState>((set, get) => ({
 
   markNotificationRead: async (id) => {
     try {
-      const result = await post<{ state: PtwState['RemoteState'] }>('MARK_NOTIFICATION_READ', { id });
+      const result = await post<{ state: RemoteState }>('MARK_NOTIFICATION_READ', { id });
       applyState(set, result.state);
       return { ok: true };
     } catch (error) {
@@ -313,7 +314,7 @@ export const usePtwStore = create<PtwState>((set, get) => ({
 
   refreshExpiries: async () => {
     try {
-      const result = await post<{ state: PtwState['RemoteState'] }>('REFRESH_EXPIRIES');
+      const result = await post<{ state: RemoteState }>('REFRESH_EXPIRIES');
       applyState(set, result.state);
     } catch {
       // Keep the last authoritative state if a background refresh fails.
