@@ -10,10 +10,10 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
-import { ROLE_LABELS_VI, STATUS_LABELS_EN, User } from '../types/domain';
-import { PERMIT_TYPE_CATALOG } from '../data/catalog';
+import { PermitAction, ROLE_LABELS_VI, STATUS_LABELS_EN, User } from '../types/domain';
+import { PERMIT_TYPE_CATALOG_MAP } from '../data/catalog';
 import { usePtwStore } from '../store/ptwStore';
-import { Badge, Button, Card, CardContent, CardHeader, CardTitle, FieldRow, inputClass, Modal } from '../components/ui/primitives';
+import { Badge, Button, Card, CardContent, CardHeader, CardTitle, FieldRow, inputClass, Modal, toButtonVariant } from '../components/ui/primitives';
 import { ApprovalStepper } from '../components/permit/ApprovalStepper';
 import { GasTestPanel } from '../components/permit/GasTestPanel';
 import { AuditTrail } from '../components/permit/AuditTrail';
@@ -29,6 +29,24 @@ interface PendingAction {
   label: string;
   tone: 'primary' | 'success' | 'danger' | 'warning' | 'critical' | 'outline';
 }
+
+/** Ánh xạ hành động ngữ nghĩa Sign-off → PermitAction dùng để kiểm tra RBAC. */
+const ACTION_TO_PERMIT_ACTION: Record<Action, PermitAction> = {
+  SUBMIT: 'SUBMIT',
+  APPROVE_LINE_SUPERVISOR: 'APPROVE',
+  APPROVE_FPS: 'APPROVE',
+  APPROVE_DEPUTY_OIM: 'APPROVE',
+  APPROVE_OIM: 'APPROVE',
+  REJECT: 'REJECT',
+  RETURN_FOR_CLARIFICATION: 'RETURN',
+  START_WORK: 'START_WORK',
+  SUSPEND: 'SUSPEND',
+  RESUME: 'RESUME',
+  COMPLETE_WORK: 'COMPLETE_WORK',
+  CLOSE: 'CLOSE',
+  CANCEL: 'CANCEL',
+  CREATE_REVISION: 'REQUEST_REVISION',
+};
 
 export function PermitDetailPage() {
   const { id } = useParamsId();
@@ -47,7 +65,7 @@ export function PermitDetailPage() {
     const list: PendingAction[] = [];
     const check = (action: Action, label: string, tone: PendingAction['tone']) => {
       // QUY TẮC BẤT DI BẤT DỊCH: quyền ký duyệt LUÔN tính bằng role THẬT.
-      if (canPerform(currentUser, permit, action).allowed) list.push({ action, label, tone });
+      if (canPerform(currentUser, permit, ACTION_TO_PERMIT_ACTION[action]).allowed) list.push({ action, label, tone });
     };
     check('SUBMIT', '📤 Trình ký chuỗi phê duyệt', 'primary');
     check('APPROVE_LINE_SUPERVISOR', '✔ Duyệt — Line Supervisor', 'success');
@@ -77,14 +95,14 @@ export function PermitDetailPage() {
   }
 
   const meta = STATUS_META[permit.status];
-  const catalog = PERMIT_TYPE_CATALOG[permit.permitType];
+  const catalog = PERMIT_TYPE_CATALOG_MAP[permit.permitType];
   const conflicts = detectSimopsConflicts(permit, permits);
   const mins = minutesUntil(permit.plannedEnd);
   const locked = !['DRAFT', 'RETURNED'].includes(permit.status);
   const approverOf = (userId?: string) => users.find((u) => u.id === userId);
 
-  const runAction = (pin: string, comment: string) => {
-    if (!signoff) return;
+  const runAction = (pin: string, comment: string): boolean => {
+    if (!signoff) return false;
     const res = perform(signoff.action, { id: permit.id }, pin, comment);
     if (!res.ok) return false;
     setSignoff(null);
@@ -105,7 +123,7 @@ export function PermitDetailPage() {
                 <span className={`h-2 w-2 rounded-full ${meta.dot} ${['SUBMITTED','LINE_SUPERVISOR_REVIEW','FPS_REVIEW','DEPUTY_OIM_REVIEW','OIM_REVIEW'].includes(permit.status) ? 'ptw-pending-dot' : ''}`} />
                 {STATUS_LABELS_EN[permit.status]}
               </span>
-              <Badge tone={RISK_TONE[permit.riskLevelAssessed]}>Risk: {permit.riskLevelAssessed}</Badge>
+              <Badge tone={RISK_TONE[permit.riskLevel]}>Risk: {permit.riskLevel}</Badge>
               {mins <= 0 && <Badge tone="danger">⌛ HẾT HIỆU LỰC</Badge>}
               {mins > 0 && mins <= 60 && <Badge tone="warning">⏰ Còn {mins} phút</Badge>}
             </div>
@@ -114,7 +132,7 @@ export function PermitDetailPage() {
             </p>
             <p className="max-w-2xl text-sm">{permit.workDescription}</p>
             <p className="font-mono text-[11px] text-muted-foreground">
-              Hiệu lực: {formatTimestamp(permit.plannedStart)} → {formatTimestamp(permit.plannedEnd)} · Applicant: {permit.applicantName} ({ROLE_LABELS_VI[permit.applicantRole]})
+              Hiệu lực: {formatTimestamp(permit.plannedStart)} → {formatTimestamp(permit.plannedEnd)} · Applicant: {permit.applicantName}{permit.applicantRole ? ` (${ROLE_LABELS_VI[permit.applicantRole]})` : ''}
             </p>
           </div>
           <div className="shrink-0 text-center">
@@ -150,7 +168,7 @@ export function PermitDetailPage() {
         <CardContent className="flex flex-wrap gap-2">
           {actions.length === 0 && <p className="text-xs text-muted-foreground">Tài khoản của bạn không có hành động khả dụng ở trạng thái này (ma trận RBAC).</p>}
           {actions.map((a) => (
-            <Button key={a.action} variant={a.tone} size="sm" onClick={() => setSignoff(a)} disabled={a.tone === 'outline'}>
+            <Button key={a.action} variant={toButtonVariant(a.tone)} size="sm" onClick={() => setSignoff(a)} disabled={a.tone === 'outline'}>
               {a.label}{a.tone === 'outline' && ' (demo)'}
             </Button>
           ))}

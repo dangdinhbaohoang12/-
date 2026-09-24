@@ -53,15 +53,90 @@ export const EQUIPMENT: EquipmentItem[] = [
 /* --------------------------- LOẠI GIẤY PHÉP PTW -------------------------- */
 
 export const PERMIT_TYPE_CATALOG: PermitTypeMeta[] = [
-  { code: 'HOT_WORK', labelVi: 'Công việc gia nhiệt (Hàn/Cắt/Mài)', labelEn: 'Hot Work Permit', icon: 'flame', workClassifications: ['HOT_WORK', 'NON_ROUTINE'], requiresGasTest: true },
-  { code: 'COLD_WORK', labelVi: 'Công việc lạnh', labelEn: 'Cold Work Permit', icon: 'snowflake', workClassifications: ['ROUTINE'], requiresGasTest: false },
-  { code: 'CONFINED_SPACE', labelVi: 'Vào không gian hạn chế', labelEn: 'Confined Space Entry Permit', icon: 'box', workClassifications: ['CONFINED_SPACE', 'NON_ROUTINE'], requiresGasTest: true },
-  { code: 'ELECTRICAL', labelVi: 'Công việc điện', labelEn: 'Electrical Work Permit', icon: 'zap', workClassifications: ['NON_ROUTINE'], requiresGasTest: false },
-  { code: 'WORKING_AT_HEIGHT', labelVi: 'Làm việc trên cao', labelEn: 'Working at Height Permit', icon: 'mountain', workClassifications: ['NON_ROUTINE'], requiresGasTest: false },
-  { code: 'LIFTING', labelVi: 'Nâng hạ / Cần cẩu', labelEn: 'Lifting / Crane Operation Permit', icon: 'crane', workClassifications: ['NON_ROUTINE'], requiresGasTest: false },
-  { code: 'EXCAVATION', labelVi: 'Đào đất', labelEn: 'Excavation Permit', icon: 'shovel', workClassifications: ['NON_ROUTINE'], requiresGasTest: false },
-  { code: 'DIVING', labelVi: 'Lặn công nghiệp', labelEn: 'Diving Permit', icon: 'waves', workClassifications: ['NON_ROUTINE'], requiresGasTest: false },
-  { code: 'RADIOGRAPHY', labelVi: 'Chụp ảnh phóng xạ (RT)', labelEn: 'Radiography Permit', icon: 'radiation', workClassifications: ['CRITICAL', 'NON_ROUTINE'], requiresGasTest: false },
+  {
+    code: 'HOT_WORK', labelVi: 'Công việc gia nhiệt (Hàn/Cắt/Mài)', labelEn: 'Hot Work Permit', icon: 'flame',
+    workClassifications: ['HOT_WORK', 'NON_ROUTINE'], requiresGasTest: true, validityHours: 8,
+    checklist: [
+      { id: 'HW-1', labelVi: 'Đã cách ly nguồn nhiên liệu/khí cháy trong bán kính an toàn', labelEn: 'Flammable sources isolated within safe radius', required: true },
+      { id: 'HW-2', labelVi: 'Đã đo nồng độ khí LEL/O2 đạt yêu cầu trước khi thi công', labelEn: 'LEL/O2 gas readings within limits before work', required: true },
+      { id: 'HW-3', labelVi: 'Đã bố trí bình chữa cháy & người canh gác cháy (Fire Watch)', labelEn: 'Fire extinguisher & fire watch in place', required: true },
+      { id: 'HW-4', labelVi: 'Đã che chắn tia lửa/kim loại nóng chảy khỏi khu vực xung quanh', labelEn: 'Sparks/slag shielded from surroundings', required: true },
+      { id: 'HW-5', labelVi: 'Đã thông báo Control Room / ESD trước khi hàn cắt', labelEn: 'Control Room / ESD notified before work', required: false },
+    ],
+  },
+  {
+    code: 'COLD_WORK', labelVi: 'Công việc lạnh', labelEn: 'Cold Work Permit', icon: 'snowflake',
+    workClassifications: ['ROUTINE'], requiresGasTest: false, validityHours: 12,
+    checklist: [
+      { id: 'CW-1', labelVi: 'Đã khảo sát mặt bằng và xác định mối nguy vật lý', labelEn: 'Site surveyed for physical hazards', required: true },
+      { id: 'CW-2', labelVi: 'Đã trang bị đầy đủ PPE cơ bản', labelEn: 'Basic PPE issued', required: true },
+      { id: 'CW-3', labelVi: 'Đã thông báo khu vực làm việc cho giám sát trực tiếp', labelEn: 'Work area notified to line supervisor', required: false },
+    ],
+  },
+  {
+    code: 'CONFINED_SPACE', labelVi: 'Vào không gian hạn chế', labelEn: 'Confined Space Entry Permit', icon: 'box',
+    workClassifications: ['CONFINED_SPACE', 'NON_ROUTINE'], requiresGasTest: true, validityHours: 8,
+    checklist: [
+      { id: 'CS-1', labelVi: 'Đã đo khí đầy đủ 4 thông số O2/LEL/H2S/CO trước khi vào', labelEn: 'Full 4-gas test (O2/LEL/H2S/CO) before entry', required: true },
+      { id: 'CS-2', labelVi: 'Đã cách ly & khóa nguồn năng lượng liên quan (LOTO)', labelEn: 'LOTO applied on related energy sources', required: true },
+      { id: 'CS-3', labelVi: 'Đã bố trí người canh gác miệng hố (Standby man) và phương tiện cứu hộ', labelEn: 'Standby man & rescue equipment ready', required: true },
+      { id: 'CS-4', labelVi: 'Đã kiểm tra thông gió cưỡng bức hoạt động liên tục', labelEn: 'Forced ventilation confirmed running', required: true },
+    ],
+  },
+  {
+    code: 'ELECTRICAL', labelVi: 'Công việc điện', labelEn: 'Electrical Work Permit', icon: 'zap',
+    workClassifications: ['NON_ROUTINE'], requiresGasTest: false, validityHours: 8,
+    checklist: [
+      { id: 'EL-1', labelVi: 'Đã cách ly & khóa nguồn điện (LOTO) và treo thẻ cảnh báo', labelEn: 'Electrical LOTO applied with warning tag', required: true },
+      { id: 'EL-2', labelVi: 'Đã kiểm tra điện áp bằng thiết bị đo trước khi thao tác', labelEn: 'Voltage verified with test meter before work', required: true },
+      { id: 'EL-3', labelVi: 'Đã trang bị PPE cách điện phù hợp cấp điện áp', labelEn: 'Voltage-rated insulating PPE issued', required: true },
+    ],
+  },
+  {
+    code: 'WORKING_AT_HEIGHT', labelVi: 'Làm việc trên cao', labelEn: 'Working at Height Permit', icon: 'mountain',
+    workClassifications: ['NON_ROUTINE'], requiresGasTest: false, validityHours: 8,
+    checklist: [
+      { id: 'WH-1', labelVi: 'Đã kiểm tra dây đai an toàn, móc treo và điểm neo', labelEn: 'Harness, lanyard and anchor points inspected', required: true },
+      { id: 'WH-2', labelVi: 'Đã lắp đặt lưới/rào chắn chống rơi vật liệu', labelEn: 'Debris netting / barricades installed', required: true },
+      { id: 'WH-3', labelVi: 'Đã kiểm tra điều kiện thời tiết trước khi thi công', labelEn: 'Weather conditions checked before work', required: false },
+    ],
+  },
+  {
+    code: 'LIFTING', labelVi: 'Nâng hạ / Cần cẩu', labelEn: 'Lifting / Crane Operation Permit', icon: 'crane',
+    workClassifications: ['NON_ROUTINE'], requiresGasTest: false, validityHours: 8,
+    checklist: [
+      { id: 'LF-1', labelVi: 'Đã kiểm tra tải trọng cho phép & chứng chỉ cần cẩu còn hiệu lực', labelEn: 'Load rating & crane certification valid', required: true },
+      { id: 'LF-2', labelVi: 'Đã xác định bán kính nguy hiểm & rào chắn khu vực nâng hạ', labelEn: 'Exclusion radius identified & barricaded', required: true },
+      { id: 'LF-3', labelVi: 'Đã bố trí người ra hiệu (Signal man/Rigger) đủ chứng chỉ', labelEn: 'Certified signal man/rigger assigned', required: true },
+    ],
+  },
+  {
+    code: 'EXCAVATION', labelVi: 'Đào đất', labelEn: 'Excavation Permit', icon: 'shovel',
+    workClassifications: ['NON_ROUTINE'], requiresGasTest: false, validityHours: 24,
+    checklist: [
+      { id: 'EX-1', labelVi: 'Đã xác định vị trí đường ống/cáp ngầm trước khi đào', labelEn: 'Underground utilities located before digging', required: true },
+      { id: 'EX-2', labelVi: 'Đã chống sạt lở vách hố đào', labelEn: 'Trench shoring against collapse', required: true },
+      { id: 'EX-3', labelVi: 'Đã rào chắn & cảnh báo khu vực hố đào', labelEn: 'Excavation barricaded & signposted', required: true },
+    ],
+  },
+  {
+    code: 'DIVING', labelVi: 'Lặn công nghiệp', labelEn: 'Diving Permit', icon: 'waves',
+    workClassifications: ['NON_ROUTINE'], requiresGasTest: false, validityHours: 12,
+    checklist: [
+      { id: 'DV-1', labelVi: 'Đã kiểm tra thiết bị lặn & nguồn cấp khí dự phòng', labelEn: 'Diving equipment & backup air supply checked', required: true },
+      { id: 'DV-2', labelVi: 'Đã bố trí thợ lặn dự phòng & giám sát mặt nước', labelEn: 'Standby diver & surface supervisor assigned', required: true },
+      { id: 'DV-3', labelVi: 'Đã thông báo hoạt động tàu thuyền trong khu vực lặn', labelEn: 'Vessel traffic in diving zone notified', required: true },
+    ],
+  },
+  {
+    code: 'RADIOGRAPHY', labelVi: 'Chụp ảnh phóng xạ (RT)', labelEn: 'Radiography Permit', icon: 'radiation',
+    workClassifications: ['CRITICAL', 'NON_ROUTINE'], requiresGasTest: false, validityHours: 8,
+    checklist: [
+      { id: 'RT-1', labelVi: 'Đã rào chắn & cảnh báo bán kính an toàn phóng xạ', labelEn: 'Radiation exclusion radius barricaded & signed', required: true },
+      { id: 'RT-2', labelVi: 'Đã kiểm tra máy đo liều xạ cá nhân còn hiệu lực', labelEn: 'Personal dosimeter validity checked', required: true },
+      { id: 'RT-3', labelVi: 'Đã thông báo HSE & cấp phép nguồn phóng xạ', labelEn: 'HSE notified & radioactive source authorized', required: true },
+    ],
+  },
 ];
 
 export function getPermitTypeMeta(code: PermitTypeCode): PermitTypeMeta {

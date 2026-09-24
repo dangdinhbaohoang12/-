@@ -169,6 +169,13 @@ export type PermitTypeCode =
   | 'DIVING'
   | 'RADIOGRAPHY';
 
+export interface PermitChecklistItem {
+  id: string;
+  labelVi: string;
+  labelEn: string;
+  required: boolean;
+}
+
 export interface PermitTypeMeta {
   code: PermitTypeCode;
   labelVi: string;
@@ -178,6 +185,10 @@ export interface PermitTypeMeta {
   workClassifications: WorkClassification[];
   /** Loại permit bắt buộc đo khí trước khi phát hành / tái phát hành. */
   requiresGasTest: boolean;
+  /** Hiệu lực tối đa (giờ) tính từ lúc phát hành. */
+  validityHours: number;
+  /** Cấu phần checklist an toàn bắt buộc xác nhận trước khi lưu draft. */
+  checklist: PermitChecklistItem[];
 }
 
 export type WorkClassification =

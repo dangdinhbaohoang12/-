@@ -26,6 +26,7 @@ export function UsersAdminPage() {
   const [org, setOrg] = useState('');
   const [cert, setCert] = useState('');
   const [pin, setPin] = useState('');
+  const [operatorPin, setOperatorPin] = useState('');
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [pinTarget, setPinTarget] = useState<User | null>(null);
   const [newPin, setNewPin] = useState('');
@@ -46,7 +47,10 @@ export function UsersAdminPage() {
 
   const submit = () => {
     setMsg(null);
-    const res = createUser({ fullName: fullName.trim(), username: username.trim().toLowerCase(), role, organization: org.trim(), certificationNumber: cert.trim(), pin });
+    const res = createUser(
+      { fullName: fullName.trim(), username: username.trim().toLowerCase(), role, platformCode: currentUser.platformCode, organization: org.trim(), certificationNumber: cert.trim(), initialPin: pin },
+      operatorPin
+    );
     if (!res.ok) { setMsg({ ok: false, text: res.error ?? 'Tạo tài khoản thất bại.' }); return; }
     setMsg({ ok: true, text: `Đã tạo tài khoản ${res.user!.username} (${ROLE_LABELS_VI[res.user!.role]}).` });
     setFullName(''); setUsername(''); setOrg(''); setCert(''); setPin('');
@@ -54,9 +58,14 @@ export function UsersAdminPage() {
 
   const savePin = () => {
     if (!pinTarget) return;
-    const res = changePin(pinTarget.id, newPin);
+    const res = changePin(pinTarget.id, newPin, operatorPin);
     setMsg(res.ok ? { ok: true, text: `Đã cập nhật PIN cho ${pinTarget.username}.` } : { ok: false, text: res.error ?? 'Lỗi.' });
     setPinTarget(null); setNewPin('');
+  };
+
+  const toggleActive = (u: User) => {
+    const res = toggleUserActive(u.id, !u.active, operatorPin);
+    setMsg(res.ok ? { ok: true, text: `Đã ${u.active ? 'khóa' : 'mở khóa'} tài khoản ${u.username}.` } : { ok: false, text: res.error ?? 'Lỗi.' });
   };
 
   return (
@@ -78,6 +87,7 @@ export function UsersAdminPage() {
             <FieldRow label="Đơn vị công tác"><input className={inputClass} value={org} onChange={(e) => setOrg(e.target.value)} placeholder="VD: Tổ Cơ khí — PPOI MT1" /></FieldRow>
             <FieldRow label="Số chứng chỉ an toàn"><input className={`${inputClass} font-mono`} value={cert} onChange={(e) => setCert(e.target.value)} placeholder="P-2026-0000" /></FieldRow>
             <FieldRow label="PIN khởi tạo (4–8 chữ số)" hint="Người dùng tự đổi sau lần đăng nhập đầu"><input type="password" inputMode="numeric" maxLength={8} className={inputClass} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} /></FieldRow>
+            <FieldRow label="PIN xác thực của Giàn trưởng (bắt buộc)" hint="Chữ ký điện tử của chính bạn để ủy quyền thao tác"><input type="password" inputMode="numeric" maxLength={8} className={inputClass} value={operatorPin} onChange={(e) => setOperatorPin(e.target.value.replace(/\D/g, ''))} /></FieldRow>
             {msg && <p className={`rounded-lg border px-3 py-2 text-xs ${msg.ok ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' : 'border-rose-500/40 bg-rose-500/10 text-rose-300'}`}>{msg.ok ? '✅' : '⛔'} {msg.text}</p>}
             <Button variant="success" className="w-full" onClick={submit}>➕ Tạo tài khoản</Button>
           </CardContent>
@@ -98,12 +108,12 @@ export function UsersAdminPage() {
                     <td className="py-2.5 pr-3"><span className="font-semibold">{u.fullName}</span><span className="block font-mono text-[10px] text-muted-foreground">@{u.username} · {u.organization}</span></td>
                     <td className="py-2.5 pr-3"><Badge tone={u.role === 'OIM' ? 'success' : u.role === 'ADMINISTRATOR' ? 'critical' : 'neutral'}>{ROLE_LABELS_VI[u.role]}</Badge></td>
                     <td className="py-2.5 pr-3 font-mono text-xs">{u.certificationNumber}</td>
-                    <td className="py-2.5 pr-3">{u.isActive ? <Badge tone="info">Hoạt động</Badge> : <Badge tone="danger">Khóa</Badge>}</td>
+                    <td className="py-2.5 pr-3">{u.active ? <Badge tone="info">Hoạt động</Badge> : <Badge tone="danger">Khóa</Badge>}</td>
                     <td className="py-2.5">
                       <div className="flex gap-1.5">
                         <Button size="sm" variant="outline" onClick={() => setPinTarget(u)}>Đổi PIN</Button>
-                        <Button size="sm" variant={u.isActive ? 'danger' : 'success'} disabled={u.id === currentUser.id} onClick={() => toggleUserActive(u.id)}>
-                          {u.isActive ? 'Khóa' : 'Mở khóa'}
+                        <Button size="sm" variant={u.active ? 'danger' : 'success'} disabled={u.id === currentUser.id} onClick={() => toggleActive(u)}>
+                          {u.active ? 'Khóa' : 'Mở khóa'}
                         </Button>
                       </div>
                     </td>

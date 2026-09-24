@@ -9,7 +9,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PermitTypeCode, RiskLevel, ROLE_LABELS_VI } from '../types/domain';
-import { AREAS, EQUIPMENT_BY_AREA, PERMIT_TYPE_CATALOG, PLATFORMS } from '../data/catalog';
+import { AREAS, EQUIPMENT_BY_AREA, PERMIT_TYPE_CATALOG_MAP, PLATFORMS } from '../data/catalog';
 import { usePtwStore } from '../store/ptwStore';
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, FieldRow, inputClass, Select } from '../components/ui/primitives';
 import { SimopsBanner } from '../components/permit/SimopsBanner';
@@ -41,10 +41,11 @@ export function PermitFormPage() {
   const [end, setEnd] = useState(toLocalInputValue(new Date(Date.now() + 9 * 3600_000).toISOString()));
   const [risk, setRisk] = useState<RiskLevel>('MEDIUM');
   const [checked, setChecked] = useState<Record<string, boolean>>({});
+  const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   if (!currentUser) return null;
-  const catalog = PERMIT_TYPE_CATALOG[permitType];
+  const catalog = PERMIT_TYPE_CATALOG_MAP[permitType];
   const areas = AREAS.filter((a) => a.platformCode === platform);
   const equipmentList = EQUIPMENT_BY_AREA[areaCode] ?? [];
   const effectiveRole = simulatedRole ?? currentUser.role;
@@ -67,15 +68,23 @@ export function PermitFormPage() {
     if (!start || !end || new Date(end) <= new Date(start)) { setError('Khung thời gian không hợp lệ.'); return; }
     const unchecked = catalog.checklist.filter((c) => c.required && !checked[c.id]);
     if (unchecked.length > 0) { setError(`Còn ${unchecked.length} cấu phần an toàn BẮT BUỘC chưa xác nhận.`); return; }
-    const res = createDraft({
-      permitType, platformCode: platform, areaCode,
-      areaName: areas.find((a) => a.code === areaCode)?.name ?? areaCode,
-      equipmentTag: equipmentTag || 'N/A',
-      workDescription: description.trim(), reasonForIssuing: reason.trim(),
-      plannedStart: new Date(start).toISOString(), plannedEnd: new Date(end).toISOString(),
-      riskLevelAssessed: risk,
-      safetyChecklistConfirmed: catalog.checklist.map((c) => ({ itemId: c.id, labelVi: c.labelVi, confirmed: true })),
-    });
+    if (!pin.trim()) { setError('PIN điện tử xác thực người khởi tạo là bắt buộc.'); return; }
+    const currentArea = areas.find((a) => a.code === areaCode);
+    const res = createDraft(
+      {
+        permitType,
+        areaId: currentArea?.id,
+        equipmentTag: equipmentTag || 'N/A',
+        workDescription: description.trim(), reasonForIssuing: reason.trim(),
+        plannedStart: new Date(start).toISOString(), plannedEnd: new Date(end).toISOString(),
+        riskLevel: risk,
+        riskLevelAssessed: risk,
+        areaCode,
+        platformCode: platform,
+        safetyChecklistConfirmed: catalog.checklist.map((c) => ({ itemId: c.id, labelVi: c.labelVi, confirmed: true })),
+      },
+      pin,
+    );
     if (!res.ok) { setError(res.error ?? 'Không tạo được draft.'); return; }
     navigate(`/permits/${res.permit!.id}`);
   };
@@ -96,8 +105,8 @@ export function PermitFormPage() {
             </FieldRow>
             <FieldRow label="Loại giấy phép">
               <Select value={permitType} onChange={(v) => { setPermitType(v as PermitTypeCode); setChecked({}); }}>
-                {Object.entries(PERMIT_TYPE_CATALOG).map(([code, meta]) => (
-                  <option key={code} value={code}>{meta.labelVi} ({meta.codeVi})</option>
+                {Object.entries(PERMIT_TYPE_CATALOG_MAP).map(([code, meta]) => (
+                  <option key={code} value={code}>{meta.labelVi} ({meta.code})</option>
                 ))}
               </Select>
             </FieldRow>
@@ -133,6 +142,9 @@ export function PermitFormPage() {
           </FieldRow>
           <FieldRow label="Lý do phát sinh công việc">
             <input className={inputClass} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="VD: Bảo trì theo kế hoạch PM-2026-118" />
+          </FieldRow>
+          <FieldRow label="PIN điện tử xác thực (bắt buộc)" hint="Chữ ký số của người khởi tạo cho bản nháp này">
+            <input type="password" maxLength={8} inputMode="numeric" className={inputClass} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} />
           </FieldRow>
         </CardContent>
       </Card>

@@ -17,6 +17,7 @@ import {
   GasTestRecord,
   Permit,
   PermitStatus,
+  RiskLevel,
   Role,
   SimopsConflict,
   StatusHistoryEntry,
@@ -53,6 +54,23 @@ export interface ActionResult {
   ok: boolean;
   error?: string;
 }
+
+/** Hành động ngữ nghĩa khả dụng trên UI Sign-off (facade cho perform()). */
+export type Action =
+  | 'SUBMIT'
+  | 'APPROVE_LINE_SUPERVISOR'
+  | 'APPROVE_FPS'
+  | 'APPROVE_DEPUTY_OIM'
+  | 'APPROVE_OIM'
+  | 'REJECT'
+  | 'RETURN_FOR_CLARIFICATION'
+  | 'START_WORK'
+  | 'SUSPEND'
+  | 'RESUME'
+  | 'COMPLETE_WORK'
+  | 'CLOSE'
+  | 'CANCEL'
+  | 'CREATE_REVISION';
 
 interface PtwState {
   permits: Permit[];
@@ -120,21 +138,7 @@ interface PtwState {
   ) => ActionResult;
   /** Facade cho UI Sign-off: map hành động ngữ nghĩa → runTransition/requestRevision. */
   perform: (
-    action:
-      | 'SUBMIT'
-      | 'APPROVE_LINE_SUPERVISOR'
-      | 'APPROVE_FPS'
-      | 'APPROVE_DEPUTY_OIM'
-      | 'APPROVE_OIM'
-      | 'REJECT'
-      | 'RETURN_FOR_CLARIFICATION'
-      | 'START_WORK'
-      | 'SUSPEND'
-      | 'RESUME'
-      | 'COMPLETE_WORK'
-      | 'CLOSE'
-      | 'CANCEL'
-      | 'CREATE_REVISION',
+    action: Action,
     target: { id: string },
     pin: string,
     comment?: string
@@ -488,8 +492,10 @@ export const usePtwStore = create<PtwState>()(
         };
 
         set({ permits: [...state.permits, permit], selectedPermitId: permit.id });
-        return { ok: true, permitNumber };
+        return { ok: true, permitNumber, permit };
       },
+
+      createDraft: (data, operatorPin) => get().createDraftPermit(data, operatorPin),
 
       updateDraftPermit: (permitId, patch) => {
         const state = get();
@@ -607,6 +613,30 @@ export const usePtwStore = create<PtwState>()(
             return { ok: false, error: 'Hành động không được hỗ trợ.' };
         }
         return applyTransitionResult(get, set, permitId, result, permit);
+      },
+
+      perform: (action, target, pin, comment) => {
+        if (action === 'CREATE_REVISION') {
+          const res = get().requestRevision(target.id, comment ?? '', pin);
+          return { ok: res.ok, error: res.error };
+        }
+        const kindMap: Record<Exclude<Action, 'CREATE_REVISION'>, Parameters<PtwState['runTransition']>[1]> = {
+          SUBMIT: 'SUBMIT',
+          APPROVE_LINE_SUPERVISOR: 'APPROVE',
+          APPROVE_FPS: 'APPROVE',
+          APPROVE_DEPUTY_OIM: 'APPROVE',
+          APPROVE_OIM: 'APPROVE',
+          REJECT: 'REJECT',
+          RETURN_FOR_CLARIFICATION: 'RETURN',
+          START_WORK: 'START_WORK',
+          SUSPEND: 'SUSPEND',
+          RESUME: 'RESUME',
+          COMPLETE_WORK: 'COMPLETE_WORK',
+          CLOSE: 'CLOSE',
+          CANCEL: 'CANCEL',
+        };
+        const kind = kindMap[action as Exclude<Action, 'CREATE_REVISION'>];
+        return get().runTransition(target.id, kind, pin, comment);
       },
 
       /* =============================== GAS TEST ============================ */

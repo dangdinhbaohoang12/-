@@ -156,12 +156,14 @@ export function Select({
   children,
   className,
   disabled,
+  placeholder,
 }: {
   value: string;
   onChange: (value: string) => void;
   children: React.ReactNode;
   className?: string;
   disabled?: boolean;
+  placeholder?: string;
 }) {
   return (
     <select
@@ -170,6 +172,7 @@ export function Select({
       onChange={(e) => onChange(e.target.value)}
       className={cn(inputClass, 'appearance-none pr-8', className)}
     >
+      {placeholder && <option value="">{placeholder}</option>}
       {children}
     </select>
   );
