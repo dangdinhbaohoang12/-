@@ -1,8 +1,8 @@
 version: 2
 updates:
   # Tự động cập nhật các thư viện Node.js hàng tuần
-  - package-ecosystem: "pnpm"
-    directory: "/"
+  - package-ecosystem: "npm"
+    directory: "/offshore-ptw"
     schedule:
       interval: "daily"
 
