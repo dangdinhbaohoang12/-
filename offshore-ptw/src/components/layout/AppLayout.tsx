@@ -33,8 +33,13 @@ export function AppLayout() {
   const [showQr, setShowQr] = useState(false);
 
   useEffect(() => {
+    // Single polling interval for the whole authenticated session – pages
+    // rendered inside this layout's <Outlet> (e.g. DashboardPage) must not
+    // register their own REFRESH_EXPIRIES interval, or every session would
+    // trigger two full-permit expiry scans per tick. 60s keeps expiries
+    // reasonably fresh without doubling as an aggressive heartbeat.
     refreshExpiries();
-    const t = setInterval(() => refreshExpiries(), 30000);
+    const t = setInterval(() => refreshExpiries(), 60000);
     return () => clearInterval(t);
   }, [refreshExpiries]);
 

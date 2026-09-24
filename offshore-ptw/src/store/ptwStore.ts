@@ -53,7 +53,7 @@ interface PtwState {
   createDraftPermit: (data: DraftPermitInput, operatorPin: string) =>
     Promise<ActionResult & { permitNumber?: string; permit?: Permit }>;
   createDraft: PtwState['createDraftPermit'];
-  updateDraftPermit: (permitId: string, patch: Partial<Permit>) => Promise<ActionResult>;
+  updateDraftPermit: (permitId: string, patch: Partial<Permit>, pin: string) => Promise<ActionResult>;
   runTransition: (
     permitId: string,
     kind:
@@ -193,26 +193,31 @@ export const usePtwStore = create<PtwState>((set, get) => ({
   },
 
   logout: async () => {
-    const token = nextStateToken();
+    // Bump the token so any state snapshot already in flight (hydrate/login)
+    // is dropped instead of clobbering the cleared state set below.
+    nextStateToken();
+    // Clear local state immediately so any navigation that happens right
+    // after calling logout() (e.g. AppLayout's `void logout(); navigate(...)`)
+    // never renders the previous session's dashboard while the LOGOUT
+    // request is still in flight. The HttpOnly cookie itself is only
+    // invalidated by the server call below.
+    set({
+      currentUser: null,
+      permits: [],
+      users: [],
+      notifications: [],
+      selectedPermitId: null,
+      simulatedRole: null,
+      sessionDeviceIp: null,
+    });
     try {
       await post('LOGOUT');
     } catch (error) {
-      // The HttpOnly session cookie is only invalidated by a successful
-      // server round-trip. If the request failed (network error or the
-      // server rejected it), keep the local authenticated state instead of
-      // treating logout as complete – the caller is expected to retry.
+      // The HttpOnly session cookie may still be valid if the server call
+      // failed (network error or rejection). The caller is expected to
+      // retry; local state stays cleared regardless so Back/forward can't
+      // resurrect the previous session's UI.
       return failed(error);
-    }
-    if (token === latestStateToken) {
-      set({
-        currentUser: null,
-        permits: [],
-        users: [],
-        notifications: [],
-        selectedPermitId: null,
-        simulatedRole: null,
-        sessionDeviceIp: null,
-      });
     }
     return { ok: true };
   },
@@ -270,10 +275,10 @@ export const usePtwStore = create<PtwState>((set, get) => ({
 
   createDraft: async (data, operatorPin) => get().createDraftPermit(data, operatorPin),
 
-  updateDraftPermit: async (permitId, patch) => {
+  updateDraftPermit: async (permitId, patch, pin) => {
     const token = nextStateToken();
     try {
-      const result = await post<{ state: RemoteState }>('UPDATE_DRAFT', { permitId, patch });
+      const result = await post<{ state: RemoteState }>('UPDATE_DRAFT', { permitId, patch, pin });
       applyState(set, token, result.state);
       return { ok: true };
     } catch (error) {

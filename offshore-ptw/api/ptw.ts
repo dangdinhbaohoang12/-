@@ -97,14 +97,27 @@ function validPin(pin: string): boolean {
   return /^\d{4,8}$/.test(pin);
 }
 
+/**
+ * scrypt cost for hashing PINs. The key space of a 4–8 digit PIN is only
+ * 10^4–10^8, so if pin_hash ever leaks, offline cracking is bounded almost
+ * entirely by per-guess cost. N=2^17 with r=8 (~128 MiB per guess) keeps a
+ * single verification well under a serverless request budget while making
+ * bulk offline cracking meaningfully more expensive than the previous
+ * N=2^14 (~16 MiB).
+ */
+const SCRYPT_N = 131072;
+const SCRYPT_R = 8;
+const SCRYPT_P = 1;
+const SCRYPT_MAXMEM = 136 * 1024 * 1024;
+
 function hashPinServer(pin: string): string {
   if (!validPin(pin)) throw new Error('PIN phải là 4–8 chữ số.');
   const salt = randomBytes(16);
   const derived = scryptSync(pin, salt, 32, {
-    N: 16384,
-    r: 8,
-    p: 1,
-    maxmem: 32 * 1024 * 1024,
+    N: SCRYPT_N,
+    r: SCRYPT_R,
+    p: SCRYPT_P,
+    maxmem: SCRYPT_MAXMEM,
   });
   return 'scrypt$v1$' + salt.toString('base64url') + '$' + derived.toString('base64url');
 }
@@ -117,10 +130,10 @@ function verifyPinHash(pin: string, encoded: string): boolean {
     const salt = Buffer.from(parts[2], 'base64url');
     const expected = Buffer.from(parts[3], 'base64url');
     const actual = scryptSync(pin, salt, expected.length || 32, {
-      N: 16384,
-      r: 8,
-      p: 1,
-      maxmem: 32 * 1024 * 1024,
+      N: SCRYPT_N,
+      r: SCRYPT_R,
+      p: SCRYPT_P,
+      maxmem: SCRYPT_MAXMEM,
     });
     return actual.length === expected.length && timingSafeEqual(actual, expected);
   } catch {
@@ -443,6 +456,31 @@ function authFailure(message = 'Phiên làm việc chưa xác thực.'): never {
   throw error;
 }
 
+/** Validation / business-rule failure caused by the request itself – must surface as 4xx, never the generic 500. */
+function badRequest(message: string): never {
+  const error = new Error(message);
+  (error as any).status = 400;
+  throw error;
+}
+
+function forbidden(message: string): never {
+  const error = new Error(message);
+  (error as any).status = 403;
+  throw error;
+}
+
+function notFound(message: string): never {
+  const error = new Error(message);
+  (error as any).status = 404;
+  throw error;
+}
+
+function conflictError(message: string): never {
+  const error = new Error(message);
+  (error as any).status = 409;
+  throw error;
+}
+
 function ensurePermission(role: Role, action: any): void {
   const result = checkPermission(role, action);
   if (!result.allowed) {
@@ -697,24 +735,24 @@ async function createDraft(user: any, body: any, req: AnyRequest): Promise<strin
   await ensurePin(user, String(body.pin ?? ''));
 
   const data = body.data ?? {};
-  if (!String(data.workDescription ?? '').trim()) throw new Error('Mô tả công việc là bắt buộc.');
-  if (!data.areaId) throw new Error('Khu vực (Area) là bắt buộc.');
-  if (!data.plannedStart || !data.plannedEnd) throw new Error('Thời gian bắt đầu/kết thúc dự kiến là bắt buộc.');
+  if (!String(data.workDescription ?? '').trim()) badRequest('Mô tả công việc là bắt buộc.');
+  if (!data.areaId) badRequest('Khu vực (Area) là bắt buộc.');
+  if (!data.plannedStart || !data.plannedEnd) badRequest('Thời gian bắt đầu/kết thúc dự kiến là bắt buộc.');
 
   const plannedStart = new Date(data.plannedStart);
   const plannedEnd = new Date(data.plannedEnd);
   if (!Number.isFinite(plannedStart.getTime()) || !Number.isFinite(plannedEnd.getTime()) || plannedEnd.getTime() <= plannedStart.getTime()) {
-    throw new Error('Khung thời gian không hợp lệ.');
+    badRequest('Khung thời gian không hợp lệ.');
   }
 
   const area = AREAS.find((item) => item.id === data.areaId);
-  if (!area) throw new Error('Khu vực không tồn tại trong danh mục giàn.');
-  if (data.platformCode && data.platformCode !== area.platformCode) throw new Error('Khu vực không thuộc đúng giàn đã chọn.');
+  if (!area) badRequest('Khu vực không tồn tại trong danh mục giàn.');
+  if (data.platformCode && data.platformCode !== area.platformCode) badRequest('Khu vực không thuộc đúng giàn đã chọn.');
   if (data.equipmentTag && data.equipmentTag !== 'N/A') {
     const equipment = EQUIPMENT.find((item) => item.tag === data.equipmentTag);
-    if (!equipment || equipment.areaId !== area.id) throw new Error('Thiết bị không thuộc khu vực đã chọn.');
+    if (!equipment || equipment.areaId !== area.id) badRequest('Thiết bị không thuộc khu vực đã chọn.');
   }
-  if (!PLATFORMS.some((platform) => platform.code === area.platformCode)) throw new Error('Giàn không hợp lệ.');
+  if (!PLATFORMS.some((platform) => platform.code === area.platformCode)) badRequest('Giàn không hợp lệ.');
 
   const permitType = data.permitType ?? 'COLD_WORK';
   validateChecklist(permitType, data.safetyChecklistConfirmed);
@@ -841,11 +879,12 @@ const DRAFT_EDITABLE_FIELDS = [
 
 async function updateDraft(user: any, body: any, req: AnyRequest): Promise<void> {
   operationalUser(user);
+  await ensurePin(user, String(body.pin ?? ''));
   const current = await requirePermit(String(body.permitId ?? ''));
   ensurePermitVisibleToUser(user, current.permit);
 
-  if (!['DRAFT', 'RETURNED'].includes(current.permit.status)) throw new Error('Permit đã gửi/duyệt – dữ liệu bị khóa. Hãy dùng Request Revision.');
-  if (current.permit.applicantUserId !== user.id && user.role !== 'PERMIT_CONTROLLER') throw new Error('Chỉ người yêu cầu hoặc PTW Controller được sửa bản nháp này.');
+  if (!['DRAFT', 'RETURNED'].includes(current.permit.status)) badRequest('Permit đã gửi/duyệt – dữ liệu bị khóa. Hãy dùng Request Revision.');
+  if (current.permit.applicantUserId !== user.id && user.role !== 'PERMIT_CONTROLLER') forbidden('Chỉ người yêu cầu hoặc PTW Controller được sửa bản nháp này.');
 
   const rawPatch = body.patch ?? {};
   const patch: Record<string, unknown> = {};
@@ -854,13 +893,13 @@ async function updateDraft(user: any, body: any, req: AnyRequest): Promise<void>
   }
 
   const candidateArea = AREAS.find((area) => area.id === (patch.areaId ?? current.permit.areaId));
-  if (!candidateArea) throw new Error('Khu vực không tồn tại trong danh mục giàn.');
+  if (!candidateArea) badRequest('Khu vực không tồn tại trong danh mục giàn.');
   const candidatePermitType = (patch.permitType ?? current.permit.permitType) as string;
   const candidateCriticalWork = Boolean(patch.criticalWork ?? current.permit.criticalWork);
   const candidateEquipmentTag = (patch.equipmentTag ?? current.permit.equipmentTag) as string;
   if (candidateEquipmentTag && candidateEquipmentTag !== 'N/A') {
     const equipment = EQUIPMENT.find((item) => item.tag === candidateEquipmentTag);
-    if (!equipment || equipment.areaId !== candidateArea.id) throw new Error('Thiết bị không thuộc khu vực đã chọn.');
+    if (!equipment || equipment.areaId !== candidateArea.id) badRequest('Thiết bị không thuộc khu vực đã chọn.');
   }
 
   const candidatePlannedStart = new Date((patch.plannedStart ?? current.permit.plannedStart) as string);
@@ -870,7 +909,7 @@ async function updateDraft(user: any, body: any, req: AnyRequest): Promise<void>
     !Number.isFinite(candidatePlannedEnd.getTime()) ||
     candidatePlannedEnd.getTime() <= candidatePlannedStart.getTime()
   ) {
-    throw new Error('Khung thời gian không hợp lệ.');
+    badRequest('Khung thời gian không hợp lệ.');
   }
 
   const candidateMeta = getPermitTypeMeta(candidatePermitType as any);
@@ -932,7 +971,7 @@ async function transition(user: any, body: any, req: AnyRequest): Promise<void> 
 
   const kind = String(body.kind ?? '');
   if (!['SUBMIT','APPROVE','REJECT','RETURN','START_WORK','SUSPEND','RESUME','COMPLETE_WORK','CLOSE','CANCEL'].includes(kind)) {
-    throw new Error('Hành động không được hỗ trợ.');
+    badRequest('Hành động không được hỗ trợ.');
   }
   ensurePermission(user.role as Role, kind === 'SUBMIT' ? 'SUBMIT' : kind);
   await ensurePin(user, String(body.pin ?? ''));
@@ -952,7 +991,7 @@ async function transition(user: any, body: any, req: AnyRequest): Promise<void> 
       const blockers = conflicts.filter(
         (conflict) => conflict.level === 'BLOCK' && !current.permit.acknowledgedConflictIds.includes(conflict.conflictId)
       );
-      if (blockers.length) throw new Error('Xung đột SIMOPS mức BLOCK chưa được đánh giá & ghi nhận quyết định.');
+      if (blockers.length) badRequest('Xung đột SIMOPS mức BLOCK chưa được đánh giá & ghi nhận quyết định.');
       result = submitPermit(current.permit, ctx);
       break;
     }
@@ -965,10 +1004,10 @@ async function transition(user: any, body: any, req: AnyRequest): Promise<void> 
     case 'COMPLETE_WORK': result = completeWork(current.permit, ctx); break;
     case 'CLOSE': result = closePermit(current.permit, ctx); break;
     case 'CANCEL': result = cancelPermit(current.permit, ctx); break;
-    default: throw new Error('Hành động không được hỗ trợ.');
+    default: badRequest('Hành động không được hỗ trợ.');
   }
 
-  if (!result?.ok || !result.permit) throw new Error(result?.error ?? 'Transition thất bại.');
+  if (!result?.ok || !result.permit) badRequest(result?.error ?? 'Transition thất bại.');
   const after = result.permit as Permit;
 
   if (kind === 'APPROVE') {
@@ -1088,20 +1127,20 @@ async function addGasTest(user: any, body: any, req: AnyRequest): Promise<void> 
   await ensurePin(user, String(body.pin ?? ''));
 
   if (TERMINAL_STATUSES.includes(current.permit.status)) {
-    throw new Error('Permit đã ở trạng thái kết thúc – không thể ghi nhận gas test.');
+    badRequest('Permit đã ở trạng thái kết thúc – không thể ghi nhận gas test.');
   }
 
   const input = body.record ?? {};
   if (!input.gasDetectorId || !input.calibrationDueDate || !input.location) {
-    throw new Error('Bắt buộc: Mã máy dò, Hạn hiệu chuẩn, Vị trí đo.');
+    badRequest('Bắt buộc: Mã máy dò, Hạn hiệu chuẩn, Vị trí đo.');
   }
   if (!hasAllRequiredParameters(input.readings ?? [])) {
-    throw new Error('Phải đo đủ 4 thông số O₂ / LEL / H₂S / CO.');
+    badRequest('Phải đo đủ 4 thông số O₂ / LEL / H₂S / CO.');
   }
   const testedAt = nowIso();
   const calibrationDate = new Date(input.calibrationDueDate);
   if (!Number.isFinite(calibrationDate.getTime()) || !isDetectorCalibrationValid(calibrationDate.toISOString(), testedAt)) {
-    throw new Error('Máy dò đã hết hạn hiệu chuẩn – phép đo không có giá trị pháp lý.');
+    badRequest('Máy dò đã hết hạn hiệu chuẩn – phép đo không có giá trị pháp lý.');
   }
 
   const rawReadings: any[] = Array.isArray(input.readings) ? input.readings : [];
@@ -1170,7 +1209,7 @@ async function addGasTest(user: any, body: any, req: AnyRequest): Promise<void> 
 async function acknowledgeSimops(user: any, body: any, req: AnyRequest): Promise<void> {
   operationalUser(user);
   if (!['OIM', 'DEPUTY_OIM', 'FPS'].includes(user.role)) {
-    throw new Error('Chỉ FPS / Deputy OIM / OIM được ghi nhận quyết định xử lý xung đột SIMOPS.');
+    forbidden('Chỉ FPS / Deputy OIM / OIM được ghi nhận quyết định xử lý xung đột SIMOPS.');
   }
   ensurePermission(user.role as Role, 'REVIEW');
   await ensurePin(user, String(body.pin ?? ''));
@@ -1181,11 +1220,11 @@ async function acknowledgeSimops(user: any, body: any, req: AnyRequest): Promise
   const conflicts = detectSimopsConflicts(current.permit, allPermits);
   const conflictId = String(body.conflictId ?? '');
   const conflict: SimopsConflict | undefined = conflicts.find((item) => item.conflictId === conflictId);
-  if (!conflict) throw new Error('Xung đột SIMOPS không còn tồn tại hoặc không hợp lệ.');
+  if (!conflict) badRequest('Xung đột SIMOPS không còn tồn tại hoặc không hợp lệ.');
   if (current.permit.acknowledgedConflictIds.includes(conflictId)) return;
 
   const note = String(body.decisionNote ?? '').trim();
-  if (!note) throw new Error('Kết luận xử lý xung đột là bắt buộc.');
+  if (!note) badRequest('Kết luận xử lý xung đột là bắt buộc.');
   const timestamp = nowIso();
   const updated: Permit = {
     ...current.permit,
@@ -1235,11 +1274,11 @@ async function requestRevision(user: any, body: any, req: AnyRequest): Promise<s
   ensurePermitVisibleToUser(user, current.permit);
 
   if (!['APPROVED', 'WORK_IN_PROGRESS', 'SUSPENDED', 'RESUMED', 'WORK_COMPLETED'].includes(current.permit.status)) {
-    throw new Error('Chỉ permit đã phát hành mới cần tạo Revision.');
+    badRequest('Chỉ permit đã phát hành mới cần tạo Revision.');
   }
 
   const reason = String(body.reason ?? '').trim();
-  if (!reason) throw new Error('Lý do revision là bắt buộc.');
+  if (!reason) badRequest('Lý do revision là bắt buộc.');
 
   const snapshot: Permit = JSON.parse(JSON.stringify(current.permit));
   const createdAt = nowIso();
@@ -1340,9 +1379,9 @@ async function requestRevision(user: any, body: any, req: AnyRequest): Promise<s
 async function changeOwnPin(user: any, body: any, res: AnyResponse): Promise<any> {
   const currentPin = String(body.currentPin ?? '');
   const newPin = String(body.newPin ?? '');
-  if (!validPin(newPin)) throw new Error('PIN mới phải là 4–8 chữ số.');
-  if (!verifyPinHash(currentPin, user.pin_hash)) throw new Error('PIN hiện tại không đúng.');
-  if (verifyPinHash(newPin, user.pin_hash)) throw new Error('PIN mới phải khác PIN hiện tại.');
+  if (!validPin(newPin)) badRequest('PIN mới phải là 4–8 chữ số.');
+  if (!verifyPinHash(currentPin, user.pin_hash)) forbidden('PIN hiện tại không đúng.');
+  if (verifyPinHash(newPin, user.pin_hash)) badRequest('PIN mới phải khác PIN hiện tại.');
 
   const sessionVersion = Number(user.session_version) + 1;
   const updated = await updateUser(user.id, {
@@ -1364,10 +1403,10 @@ async function createUserAccount(user: any, body: any): Promise<void> {
   const input = body.input ?? {};
   const username = normalizeUsername(String(input.username ?? ''));
   const initialPin = String(input.initialPin ?? '');
-  if (!/^[a-z][a-z0-9._-]{2,29}$/.test(username)) throw new Error('Username không hợp lệ (3–30 ký tự, bắt đầu bằng chữ).');
-  if (!validPin(initialPin)) throw new Error('PIN khởi tạo phải là 4–8 chữ số.');
-  if (username === normalizeUsername(user.username)) throw new Error('Không thể tạo lại chính tài khoản của bạn.');
-  if (await getUserByUsername(username)) throw new Error('Username đã tồn tại trong danh bạ hệ thống.');
+  if (!/^[a-z][a-z0-9._-]{2,29}$/.test(username)) badRequest('Username không hợp lệ (3–30 ký tự, bắt đầu bằng chữ).');
+  if (!validPin(initialPin)) badRequest('PIN khởi tạo phải là 4–8 chữ số.');
+  if (username === normalizeUsername(user.username)) badRequest('Không thể tạo lại chính tài khoản của bạn.');
+  if (await getUserByUsername(username)) conflictError('Username đã tồn tại trong danh bạ hệ thống.');
 
   const newUserId = newId('U');
   const created = await applyUserTransaction(
@@ -1402,9 +1441,9 @@ async function changeUserPin(user: any, body: any): Promise<void> {
   await ensurePin(user, String(body.operatorPin ?? ''));
   const userId = String(body.userId ?? '');
   const newPin = String(body.newPin ?? '');
-  if (!validPin(newPin)) throw new Error('PIN mới phải là 4–8 chữ số.');
+  if (!validPin(newPin)) badRequest('PIN mới phải là 4–8 chữ số.');
   const target = await getUserById(userId);
-  if (!target) throw new Error('Không tìm thấy tài khoản đích.');
+  if (!target) notFound('Không tìm thấy tài khoản đích.');
 
   await applyUserTransaction(
     'update',
@@ -1425,9 +1464,9 @@ async function toggleUserActive(user: any, body: any, req: AnyRequest): Promise<
   ensurePermission(user.role as Role, 'MANAGE_USERS');
   await ensurePin(user, String(body.operatorPin ?? ''));
   const userId = String(body.userId ?? '');
-  if (userId === user.id) throw new Error('Không thể khóa chính tài khoản đang đăng nhập.');
+  if (userId === user.id) badRequest('Không thể khóa chính tài khoản đang đăng nhập.');
   const target = await getUserById(userId);
-  if (!target) throw new Error('Không tìm thấy tài khoản đích.');
+  if (!target) notFound('Không tìm thấy tài khoản đích.');
 
   const active = Boolean(body.active);
   await applyUserTransaction(
@@ -1452,7 +1491,7 @@ async function markNotificationRead(user: any, body: any): Promise<void> {
     encodeURIComponent(user.id) +
     '&id=eq.' + encodeURIComponent(id) + '&limit=1'
   );
-  if (!rows?.[0]) throw new Error('Thông báo không tồn tại hoặc không thuộc phiên của bạn.');
+  if (!rows?.[0]) notFound('Thông báo không tồn tại hoặc không thuộc phiên của bạn.');
 
   const timestamp = nowIso();
   const existing = await supabase(
