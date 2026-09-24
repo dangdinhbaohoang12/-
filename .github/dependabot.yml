@@ -1,7 +1,7 @@
 version: 2
 updates:
   # Tự động cập nhật các thư viện Node.js hàng tuần
-  - package-ecosystem: "pnpm"
+  - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "daily"
