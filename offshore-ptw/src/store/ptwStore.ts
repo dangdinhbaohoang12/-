@@ -199,7 +199,7 @@ function applyTransitionResult(
         };
       });
     }
-  },
+  }
 
   login: async (username, pin) => {
     const token = nextStateToken();
