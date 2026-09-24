@@ -18,10 +18,10 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [showHint, setShowHint] = useState(false);
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    const res = login(username, pin);
+    const res = await login(username, pin);
     if (!res.ok) { setError(res.error ?? 'Đăng nhập thất bại.'); return; }
     navigate('/', { replace: true });
   };
@@ -47,15 +47,9 @@ export function LoginPage() {
             {showHint ? 'Ẩn danh sách tài khoản' : 'Quên tài khoản? Xem danh bạ được OIM phê chuẩn'}
           </button>
           {showHint && (
-            <div className="max-h-44 overflow-y-auto rounded-lg border border-border bg-muted/40 p-3 font-mono text-[10px] leading-5 text-muted-foreground">
-              <p><b className="text-foreground">tranvanhung</b> — OIM (Giàn trưởng)</p>
-              <p><b className="text-foreground">phamvankhoa</b> — Deputy OIM</p>
-              <p><b className="text-foreground">lethiquyen</b> — FPS</p>
-              <p><b className="text-foreground">nguyenvana</b> — Line Supervisor</p>
-              <p><b className="text-foreground">hoangminhtu</b> — Permit Applicant</p>
-              <p><b className="text-foreground">vusithanh</b> — PTW Controller</p>
-              <p><b className="text-foreground">dangbaocan</b> — HSE Officer</p>
-              <p className="mt-1 italic">PIN cá nhân do Giàn trưởng cấp khi tạo tài khoản (không hiển thị trên hệ thống).</p>
+            <div className="rounded-lg border border-border bg-muted/40 p-3 text-[10px] leading-5 text-muted-foreground">
+              <p>Không hiển thị tài khoản hoặc PIN trên trình duyệt.</p>
+              <p className="mt-1">Liên hệ Giàn trưởng (OIM) để được cấp hoặc khôi phục tài khoản.</p>
             </div>
           )}
         </form>
