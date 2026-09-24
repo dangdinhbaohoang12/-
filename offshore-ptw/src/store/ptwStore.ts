@@ -469,7 +469,7 @@ export const usePtwStore = create<PtwState>()(
 
         const year = new Date().getFullYear();
         const seq = state.permits.filter((p) => p.platformCode === area.platformCode).length + 1;
-        const permitNumber = `${area.platformCode}-PTW-${year}-${String(seq).padStart(5, '0')}`;
+const permitNumber = `${area.platformCode}-PTW-${year}-${String(seq).padStart(6, '0')}`;
 
         const classifications = Array.from(
           new Set([
