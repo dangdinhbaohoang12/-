@@ -3,6 +3,7 @@ import { checkPermission } from './engine/rbacMatrix';
 import { buildApprovalChain } from './engine/approvalRuleEngine';
 import { computeOverallResult, hasAllRequiredParameters, hasValidGasTest } from './engine/gasTestEngine';
 import { detectSimopsConflicts } from './engine/simopsEngine';
+import { approveAtCurrentLevel } from './engine/workflowStateMachine';
 import type { Permit } from './types/domain';
 
 const permit=(o:Partial<Permit>={}):Permit=>({
@@ -36,4 +37,33 @@ describe('SIMOPS',()=>{
    const a=permit({permitType:'HOT_WORK'}); const b=permit({id:'P2',permitType:'CONFINED_SPACE',status:'APPROVED',supersededByPermitId:'P3'});
    expect(detectSimopsConflicts(a,[a,b])).toHaveLength(0);
  });
+});
+
+
+describe('Permit validity', () => {
+  it('caps issued validity by the permit type validityHours', () => {
+    const p = permit({
+      permitType: 'COLD_WORK',
+      status: 'OIM_REVIEW',
+      currentApprovalLevel: 'OIM',
+      plannedStart: '2026-09-24T10:00:00.000Z',
+      plannedEnd: '2026-09-25T10:00:00.000Z',
+      approvalChain: buildApprovalChain({
+        permitType: 'COLD_WORK',
+        riskLevel: 'LOW',
+        areaHazardous: false,
+        criticalWork: false,
+        workClassifications: ['ROUTINE'],
+      }).chain.map((s) => s.level === 'OIM' ? s : { ...s, status: 'DONE' as const }),
+    });
+    const result = approveAtCurrentLevel(p, {
+      role: 'OIM',
+      userId: 'OIM-1',
+      userName: 'OIM',
+      deviceIp: 'UNKNOWN',
+      now: new Date('2026-09-24T10:00:00.000Z'),
+    });
+    expect(result.ok).toBe(true);
+    expect(result.permit?.validUntil).toBe('2026-09-24T22:00:00.000Z');
+  });
 });
