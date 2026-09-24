@@ -1,0 +1,42 @@
+name: Tự động xử lý Issue Chore
+
+on:
+  issues:
+    types: [opened, edited]
+
+jobs:
+  handle_chore:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Dán nhãn và bình luận
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = context.payload.issue.title;
+            
+            // Kiểm tra xem tiêu đề có chứa 'chore:' không
+            if (title.toLowerCase().includes('chore:')) {
+              const owner = context.repo.owner;
+              const repo = context.repo.repo;
+              const issue_number = context.issue.number;
+
+              // 1. Dán nhãn ưu tiên thấp
+              await github.rest.issues.addLabels({
+                owner,
+                repo,
+                issue_number,
+                labels: ['low-priority'] // Tên nhãn ưu tiên thấp của bạn
+              });
+
+              // 2. Thêm bình luận tự động
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body: 'Thứ này sẽ được sửa sau' // Nội dung bình luận
+              });
+
+              console.log(`Đã xử lý xong issue #${issue_number}`);
+            }
