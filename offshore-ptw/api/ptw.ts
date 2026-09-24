@@ -754,7 +754,7 @@ async function updateDraft(user: any, body: any, req: AnyRequest): Promise<void>
   if (!['DRAFT', 'RETURNED'].includes(current.permit.status)) throw new Error('Permit đã gửi/duyệt – dữ liệu bị khóa. Hãy dùng Request Revision.');
   if (current.permit.applicantUserId !== user.id && user.role !== 'PERMIT_CONTROLLER') throw new Error('Chỉ người yêu cầu hoặc PTW Controller được sửa bản nháp này.');
 
-  const patch = { ...(body.patch ?? {}) };
+  const patch = { ...body.patch };
   for (const key of ['permitNumber', 'id', 'status', 'approvalChain', 'statusHistory', 'revisions', 'createdAt', 'createdById']) {
     delete patch[key];
   }
