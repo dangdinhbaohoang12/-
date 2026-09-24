@@ -67,7 +67,7 @@ export function DashboardPage() {
   const gasAbnormal = visible.filter((p) => p.gasTests.some((g) => g.overallResult === 'FAIL'));
   const simops = visible.filter((p) => detectSimopsConflicts(p, permits).length > 0);
   const expiringSoon = active.filter((p) => {
-    const m = minutesUntil(p.plannedEnd);
+    const m = minutesUntil(p.validUntil ?? p.plannedEnd);
     return m > 0 && m <= 60;
   });
 
@@ -183,7 +183,7 @@ function PermitRow({ permit: p, allPermits, onOpen }: { permit: Permit; allPermi
       <td className="max-w-[260px] py-2.5 pr-3 text-xs"><span className="line-clamp-2">{p.workDescription}</span></td>
       <td className="py-2.5 pr-3 text-xs">{p.applicantName}</td>
       <td className="py-2.5 pr-3 font-mono text-xs">
-        {formatTimestamp(p.plannedEnd)}
+        {formatTimestamp(p.validUntil ?? p.plannedEnd)}
         {mins > 0 && mins <= 60 && <span className="block font-bold text-orange-400">⏰ còn {mins}'</span>}
         {mins <= 0 && <span className="block font-bold text-rose-400">HẾT HẠN</span>}
       </td>
