@@ -103,7 +103,21 @@ export function AppLayout() {
             <button type="button" onClick={() => navigate('/permits')} className="relative rounded-lg border border-border px-2 py-1 text-xs hover:bg-muted" title="Thông báo">
               🔔 {unread > 0 && <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-600 px-1 text-[9px] font-bold text-white">{unread}</span>}
             </button>
-            <button type="button" onClick={() => { void logout(); navigate('/login'); }} className="rounded-lg bg-muted px-3 py-1 text-xs font-semibold hover:bg-border">
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await logout();
+                } catch {
+                  // Local session state is already cleared by the store; the
+                  // server call failing just means the cookie may still be
+                  // valid until it expires – still navigate to /login.
+                } finally {
+                  navigate('/login');
+                }
+              }}
+              className="rounded-lg bg-muted px-3 py-1 text-xs font-semibold hover:bg-border"
+            >
               Đăng xuất
             </button>
           </div>
@@ -137,13 +151,20 @@ function RequiredPinChangeModal({ onChange }: {
   const [newPin, setNewPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const submit = async () => {
+    if (submitting) return;
     setError(null);
     if (!/^\d{4,8}$/.test(newPin)) return setError('PIN mới phải là 4–8 chữ số.');
     if (newPin !== confirmPin) return setError('PIN xác nhận không khớp.');
-    const result = await onChange(newPin, currentPin);
-    if (!result.ok) return setError(result.error ?? 'Không thể đổi PIN.');
-    setCurrentPin(''); setNewPin(''); setConfirmPin('');
+    setSubmitting(true);
+    try {
+      const result = await onChange(newPin, currentPin);
+      if (!result.ok) { setError(result.error ?? 'Không thể đổi PIN.'); return; }
+      setCurrentPin(''); setNewPin(''); setConfirmPin('');
+    } finally {
+      setSubmitting(false);
+    }
   };
   return <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4">
     <div className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl">
@@ -154,7 +175,9 @@ function RequiredPinChangeModal({ onChange }: {
         <input aria-label="PIN mới" type="password" inputMode="numeric" maxLength={8} className="h-10 w-full rounded-lg border border-input bg-input/40 px-3" value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))} />
         <input aria-label="Xác nhận PIN mới" type="password" inputMode="numeric" maxLength={8} className="h-10 w-full rounded-lg border border-input bg-input/40 px-3" value={confirmPin} onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ''))} />
         {error && <p className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">⛔ {error}</p>}
-        <button type="button" onClick={submit} className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground">Đổi PIN & tiếp tục</button>
+        <button type="button" onClick={submit} disabled={submitting} className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground disabled:opacity-60">
+          {submitting ? 'Đang xử lý…' : 'Đổi PIN & tiếp tục'}
+        </button>
       </div>
     </div>
   </div>;

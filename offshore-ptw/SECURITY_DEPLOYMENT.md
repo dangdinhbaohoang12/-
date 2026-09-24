@@ -16,7 +16,7 @@ The bootstrap OIM is created only when the database has no users. Its PIN comes 
 
 ## Runtime model
 
-The browser keeps only transient UI/session state. The authenticated session is an HttpOnly signed cookie. Every business mutation reloads the authoritative user and permit from PostgreSQL, checks server-side RBAC and PIN, applies the existing workflow engines, and writes permit + audit + notifications transactionally.
+The browser keeps only transient UI/session state. The authenticated session is an HttpOnly signed cookie. Every permit workflow mutation (CREATE_DRAFT, TRANSITION, ADD_GAS_TEST, ACK_SIMOPS, REQUEST_REVISION) reloads the authoritative user and permit from PostgreSQL, checks server-side RBAC and PIN, applies the existing workflow engines, and writes permit + audit + notifications transactionally via the permit transaction RPC. UPDATE_DRAFT and REFRESH_EXPIRIES do not perform PIN checks (UPDATE_DRAFT still enforces RBAC/ownership and re-validates the safety checklist; REFRESH_EXPIRIES is a system job with no user-supplied RBAC/PIN context). Account and notification mutations use their own dedicated RPC/queries, not the permit transaction RPC.
 
 Login failures are counted server-side. Five consecutive failures lock the account for 15 minutes. Disabling an account or changing its PIN increments session_version and invalidates existing sessions.
 

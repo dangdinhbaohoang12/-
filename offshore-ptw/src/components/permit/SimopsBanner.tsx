@@ -25,6 +25,7 @@ export function SimopsBanner({ permit, conflicts }: { permit: Permit; conflicts:
   const [note, setNote] = useState('');
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   if (conflicts.length === 0) {
     return (
@@ -37,11 +38,21 @@ export function SimopsBanner({ permit, conflicts }: { permit: Permit; conflicts:
   const canAck = !!currentUser && ['FPS', 'DEPUTY_OIM', 'OIM'].includes(currentUser.role);
 
   const submitAck = async () => {
+    if (submitting || !target) return;
     setError(null);
-    if (!target) return;
-    const res = await acknowledge(permit.id, target.conflictId, note.trim(), pin);
-    if (!res.ok) { setError(res.error ?? 'Không ghi nhận được.'); return; }
-    setTarget(null); setNote(''); setPin('');
+    const conflictId = target.conflictId;
+    setSubmitting(true);
+    try {
+      const res = await acknowledge(permit.id, conflictId, note.trim(), pin);
+      // The modal may have been closed/reopened for a different conflict
+      // while this request was in flight; only apply the result if it's
+      // still the one we started for.
+      if (target?.conflictId !== conflictId) return;
+      if (!res.ok) { setError(res.error ?? 'Không ghi nhận được.'); return; }
+      setTarget(null); setNote(''); setPin('');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -80,8 +91,8 @@ export function SimopsBanner({ permit, conflicts }: { permit: Permit; conflicts:
           <FieldRow label="PIN điện tử xác nhận"><input type="password" maxLength={8} className={inputClass} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} /></FieldRow>
           {error && <p className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">⛔ {error}</p>}
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setTarget(null)}>Hủy</Button>
-            <Button variant="danger" onClick={submitAck} disabled={!note.trim()}>Ký & ghi nhận</Button>
+            <Button variant="ghost" onClick={() => setTarget(null)} disabled={submitting}>Hủy</Button>
+            <Button variant="danger" onClick={submitAck} disabled={!note.trim() || submitting}>{submitting ? 'Đang gửi…' : 'Ký & ghi nhận'}</Button>
           </div>
         </div>
       </Modal>

@@ -126,7 +126,12 @@ export const usePtwStore = create<PtwState>((set, get) => ({
   hydrate: async () => {
     try {
       const state = await getState();
-      applyState(set, state);
+      // A concurrent login may have completed while this GET was in flight;
+      // don't let the stale unauthenticated hydration response clobber it.
+      if (!get().currentUser) applyState(set, state);
+    } catch {
+      // Expired session / network outage: degrade to the login redirect
+      // handled by RequireAuth instead of rejecting on every page load.
     } finally {
       set({ authReady: true });
     }

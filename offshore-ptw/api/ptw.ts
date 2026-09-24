@@ -32,6 +32,7 @@ import {
   PLATFORMS,
   getPermitTypeMeta,
 } from '../src/data/catalog';
+import { TERMINAL_STATUSES } from '../src/types/domain';
 import type {
   AppNotification,
   GasTestRecord,
@@ -57,10 +58,28 @@ function requiredEnv(name: string): string {
   return value;
 }
 
+/** Known .env.example placeholder sentinels – must never be accepted as real secrets. */
+const PLACEHOLDER_SECRET_VALUES = new Set([
+  'replace_with_a_long_random_session_secret',
+  'replace_with_a_long_random_audit_secret',
+  'replace_with_a_secret_service_role_key',
+]);
+
+function requiredSecret(name: string, minLength = 32): string {
+  const value = requiredEnv(name);
+  if (PLACEHOLDER_SECRET_VALUES.has(value) || value.length < minLength) {
+    throw new Error(
+      'Environment variable ' + name + ' is missing, a template placeholder, or too short (' +
+      'min ' + minLength + ' chars). Generate and set a real random secret before deploying.'
+    );
+  }
+  return value;
+}
+
 const SUPABASE_URL = requiredEnv('SUPABASE_URL').replace(/\/+$/, '');
-const SUPABASE_SERVICE_ROLE_KEY = requiredEnv('SUPABASE_SERVICE_ROLE_KEY');
-const PTW_SESSION_SECRET = requiredEnv('PTW_SESSION_SECRET');
-const PTW_AUDIT_SECRET = requiredEnv('PTW_AUDIT_SECRET');
+const SUPABASE_SERVICE_ROLE_KEY = requiredSecret('SUPABASE_SERVICE_ROLE_KEY', 20);
+const PTW_SESSION_SECRET = requiredSecret('PTW_SESSION_SECRET');
+const PTW_AUDIT_SECRET = requiredSecret('PTW_AUDIT_SECRET');
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -167,7 +186,7 @@ function clearSessionCookie(res: AnyResponse): void {
   );
 }
 
-function clientIp(req: AnyRequest): string {
+function deviceIpFor(req: AnyRequest): string {
   const forwarded = req.headers?.['x-forwarded-for'];
   if (typeof forwarded === 'string' && forwarded.trim()) return forwarded.split(',')[0].trim();
   const real = req.headers?.['x-real-ip'];
@@ -240,6 +259,41 @@ async function updateUser(id: string, patch: Record<string, unknown>): Promise<a
   return rows?.[0] ?? null;
 }
 
+/** Commits a user create/update and its audit-log entry in a single PostgreSQL transaction. */
+async function applyUserTransaction(
+  operation: 'insert' | 'update',
+  userRow: Record<string, unknown>,
+  audit: Record<string, unknown>,
+): Promise<any> {
+  return rpc('ptw_apply_user_transaction', {
+    p_operation: operation,
+    p_user: userRow,
+    p_audit: audit,
+  });
+}
+
+function accountAudit(
+  actor: any,
+  action: string,
+  deviceIp: string,
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    id: newId('AUDIT'),
+    permitId: null,
+    permitNumber: null,
+    actorUserId: actor.id,
+    actorRole: actor.role,
+    eventType: 'UPDATED',
+    action,
+    fromStatus: null,
+    toStatus: null,
+    deviceIp,
+    payload,
+    occurredAt: nowIso(),
+  };
+}
+
 async function getAllPermitRows(): Promise<any[]> {
   return (await supabase('ptw_permits?select=*&order=updated_at.desc')) ?? [];
 }
@@ -268,14 +322,21 @@ function rowUser(row: any): UserAccount {
     platformCode: row.platform_code,
     organization: row.organization ?? undefined,
     certificationNumber: row.certification_number ?? undefined,
-    email: row.email ?? undefined,
-    phone: row.phone ?? undefined,
     pinHash: '',
     active: Boolean(row.active),
     mustChangePin: Boolean(row.must_change_pin),
     createdAt: row.created_at,
     createdByUserId: row.created_by_user_id ?? 'SYSTEM-BOOTSTRAP',
     lastLoginAt: row.last_login_at ?? undefined,
+  };
+}
+
+/** Adds contact fields (email/phone) – only for OIM user administration, never broadcast to the whole directory. */
+function rowUserWithContact(row: any): UserAccount {
+  return {
+    ...rowUser(row),
+    email: row.email ?? undefined,
+    phone: row.phone ?? undefined,
   };
 }
 
@@ -309,14 +370,15 @@ async function publicState(userRow: any | null): Promise<Record<string, unknown>
     return { permits: [], users: [], currentUser: null, notifications: [] };
   }
 
-  const users = (await getAllUserRows()).map(rowUser);
+  const userRows = await getAllUserRows();
+  const users = userRow.role === 'OIM' ? userRows.map(rowUserWithContact) : userRows.map(rowUser);
   const permitRows = await getAllPermitRows();
   const permits = filterVisiblePermits(userRow, permitRows.map(rowPermit));
   const notifications = (await getNotificationRows(userRow.id)).map(rowNotification);
   return {
     permits,
     users,
-    currentUser: rowUser(userRow),
+    currentUser: rowUserWithContact(userRow),
     notifications,
   };
 }
@@ -363,6 +425,7 @@ async function authenticatedUser(req: AnyRequest): Promise<any | null> {
   if (!session) return null;
   const user = await getUserById(session.uid);
   if (!user || !user.active || Number(user.session_version) !== session.sv) return null;
+  if (user.locked_until && new Date(user.locked_until).getTime() > Date.now()) return null;
   return user;
 }
 
@@ -389,12 +452,38 @@ function ensurePermission(role: Role, action: any): void {
   }
 }
 
-function ensurePin(user: any, pin: string): void {
-  if (!verifyPinHash(pin, user.pin_hash)) {
-    const error = new Error('PIN điện tử không đúng.');
-    (error as any).status = 403;
-    throw error;
-  }
+/**
+ * Atomically increments the failure counter (and locks the account past the
+ * threshold) in PostgreSQL so concurrent bad attempts can't race the
+ * read-modify-write and bypass the lockout.
+ */
+async function recordAuthFailure(userId: string): Promise<{ failedLoginCount: number; lockedUntil: string | null }> {
+  const rows = await rpc('ptw_record_auth_failure', {
+    p_user_id: userId,
+    p_max_failures: MAX_LOGIN_FAILURES,
+    p_lock_ms: LOGIN_LOCK_MS,
+  });
+  const row = rows?.[0] ?? {};
+  return {
+    failedLoginCount: Number(row.failed_login_count ?? 0),
+    lockedUntil: row.locked_until ?? null,
+  };
+}
+
+function lockoutError(): never {
+  const error = new Error('Tài khoản tạm khóa do có quá nhiều lần xác thực thất bại.');
+  (error as any).status = 429;
+  throw error;
+}
+
+/** Operational PIN check – failures are counted/locked the same way as LOGIN failures. */
+async function ensurePin(user: any, pin: string): Promise<void> {
+  if (verifyPinHash(pin, user.pin_hash)) return;
+  const { lockedUntil } = await recordAuthFailure(user.id);
+  if (lockedUntil && new Date(lockedUntil).getTime() > Date.now()) lockoutError();
+  const error = new Error('PIN điện tử không đúng.');
+  (error as any).status = 403;
+  throw error;
 }
 
 async function authenticateLogin(usernameInput: string, pin: string): Promise<any> {
@@ -406,17 +495,12 @@ async function authenticateLogin(usernameInput: string, pin: string): Promise<an
   if (!user) return null;
 
   if (user.locked_until && new Date(user.locked_until).getTime() > now) {
-    const error = new Error('Tài khoản tạm khóa do có quá nhiều lần xác thực thất bại.');
-    (error as any).status = 429;
-    throw error;
+    lockoutError();
   }
 
   if (!user.active || !verifyPinHash(pin, user.pin_hash)) {
-    const failures = Number(user.failed_login_count ?? 0) + 1;
-    await updateUser(user.id, {
-      failed_login_count: failures,
-      locked_until: failures >= MAX_LOGIN_FAILURES ? new Date(now + LOGIN_LOCK_MS).toISOString() : null,
-    });
+    const { lockedUntil } = await recordAuthFailure(user.id);
+    if (lockedUntil && new Date(lockedUntil).getTime() > now) lockoutError();
     const error = new Error('Username hoặc PIN không đúng.');
     (error as any).status = 401;
     throw error;
@@ -610,7 +694,7 @@ function validateChecklist(permitType: string, confirmed: unknown): void {
 async function createDraft(user: any, body: any, req: AnyRequest): Promise<string> {
   operationalUser(user);
   ensurePermission(user.role as Role, 'CREATE');
-  ensurePin(user, String(body.pin ?? ''));
+  await ensurePin(user, String(body.pin ?? ''));
 
   const data = body.data ?? {};
   if (!String(data.workDescription ?? '').trim()) throw new Error('Mô tả công việc là bắt buộc.');
@@ -692,6 +776,7 @@ async function createDraft(user: any, body: any, req: AnyRequest): Promise<strin
     currentApprovalLevel: null,
     approvalChain: chain,
     requiresGasTest: typeMeta.requiresGasTest,
+    safetyChecklistConfirmed: Array.isArray(data.safetyChecklistConfirmed) ? data.safetyChecklistConfirmed : [],
     gasTests: [],
     riskAssessments: [],
     lotoRecords: [],
@@ -746,6 +831,14 @@ async function createDraft(user: any, body: any, req: AnyRequest): Promise<strin
   return permit.id;
 }
 
+/** Editable business fields for a draft. Workflow evidence (gasTests, status, approvalChain, acknowledgedConflictIds, ...) is never accepted from the client. */
+const DRAFT_EDITABLE_FIELDS = [
+  'permitType', 'riskLevel', 'areaId', 'equipmentTag', 'workDescription',
+  'reasonForIssuing', 'contractorCompany', 'companyDepartment',
+  'supervisorUserId', 'supervisorName', 'workOrderNo', 'priority',
+  'plannedStart', 'plannedEnd', 'criticalWork', 'safetyChecklistConfirmed',
+] as const;
+
 async function updateDraft(user: any, body: any, req: AnyRequest): Promise<void> {
   operationalUser(user);
   const current = await requirePermit(String(body.permitId ?? ''));
@@ -754,21 +847,35 @@ async function updateDraft(user: any, body: any, req: AnyRequest): Promise<void>
   if (!['DRAFT', 'RETURNED'].includes(current.permit.status)) throw new Error('Permit đã gửi/duyệt – dữ liệu bị khóa. Hãy dùng Request Revision.');
   if (current.permit.applicantUserId !== user.id && user.role !== 'PERMIT_CONTROLLER') throw new Error('Chỉ người yêu cầu hoặc PTW Controller được sửa bản nháp này.');
 
-  const patch = { ...body.patch };
-  for (const key of ['permitNumber', 'id', 'status', 'approvalChain', 'statusHistory', 'revisions', 'createdAt', 'createdById']) {
-    delete patch[key];
+  const rawPatch = body.patch ?? {};
+  const patch: Record<string, unknown> = {};
+  for (const key of DRAFT_EDITABLE_FIELDS) {
+    if (rawPatch[key] !== undefined) patch[key] = rawPatch[key];
   }
 
   const candidateArea = AREAS.find((area) => area.id === (patch.areaId ?? current.permit.areaId));
   if (!candidateArea) throw new Error('Khu vực không tồn tại trong danh mục giàn.');
-  const candidatePermitType = patch.permitType ?? current.permit.permitType;
-  const candidateCriticalWork = patch.criticalWork ?? current.permit.criticalWork;
-  const candidateEquipmentTag = patch.equipmentTag ?? current.permit.equipmentTag;
+  const candidatePermitType = (patch.permitType ?? current.permit.permitType) as string;
+  const candidateCriticalWork = Boolean(patch.criticalWork ?? current.permit.criticalWork);
+  const candidateEquipmentTag = (patch.equipmentTag ?? current.permit.equipmentTag) as string;
   if (candidateEquipmentTag && candidateEquipmentTag !== 'N/A') {
     const equipment = EQUIPMENT.find((item) => item.tag === candidateEquipmentTag);
     if (!equipment || equipment.areaId !== candidateArea.id) throw new Error('Thiết bị không thuộc khu vực đã chọn.');
   }
-  const candidateMeta = getPermitTypeMeta(candidatePermitType);
+
+  const candidatePlannedStart = new Date((patch.plannedStart ?? current.permit.plannedStart) as string);
+  const candidatePlannedEnd = new Date((patch.plannedEnd ?? current.permit.plannedEnd) as string);
+  if (
+    !Number.isFinite(candidatePlannedStart.getTime()) ||
+    !Number.isFinite(candidatePlannedEnd.getTime()) ||
+    candidatePlannedEnd.getTime() <= candidatePlannedStart.getTime()
+  ) {
+    throw new Error('Khung thời gian không hợp lệ.');
+  }
+
+  const candidateMeta = getPermitTypeMeta(candidatePermitType as any);
+  const candidateChecklist = patch.safetyChecklistConfirmed ?? current.permit.safetyChecklistConfirmed;
+  validateChecklist(candidatePermitType, candidateChecklist);
   const candidateClassifications = Array.from(new Set([
     ...candidateMeta.workClassifications,
     ...(candidateArea.hazardous ? ['HIGH_RISK_AREA'] : []),
@@ -778,7 +885,7 @@ async function updateDraft(user: any, body: any, req: AnyRequest): Promise<void>
   const updated: Permit = {
     ...current.permit,
     ...patch,
-    permitType: candidatePermitType,
+    permitType: candidatePermitType as Permit['permitType'],
     platformCode: candidateArea.platformCode,
     areaId: candidateArea.id,
     areaCode: candidateArea.code,
@@ -787,6 +894,9 @@ async function updateDraft(user: any, body: any, req: AnyRequest): Promise<void>
     criticalWork: candidateCriticalWork,
     workClassifications: candidateClassifications,
     requiresGasTest: candidateMeta.requiresGasTest,
+    plannedStart: candidatePlannedStart.toISOString(),
+    plannedEnd: candidatePlannedEnd.toISOString(),
+    safetyChecklistConfirmed: candidateChecklist as Permit['safetyChecklistConfirmed'],
     updatedAt: nowIso(),
     statusHistory: [...current.permit.statusHistory],
   };
@@ -803,7 +913,7 @@ async function updateDraft(user: any, body: any, req: AnyRequest): Promise<void>
       action: 'Cập nhật nội dung bản nháp',
       deviceIp: deviceIpFor(req),
       oldValues: { description: current.permit.workDescription },
-      newValues: { description: patch.workDescription ?? current.permit.workDescription },
+      newValues: { description: String(patch.workDescription ?? current.permit.workDescription) },
       timestamp: nowIso(),
     }
   ));
@@ -825,7 +935,7 @@ async function transition(user: any, body: any, req: AnyRequest): Promise<void> 
     throw new Error('Hành động không được hỗ trợ.');
   }
   ensurePermission(user.role as Role, kind === 'SUBMIT' ? 'SUBMIT' : kind);
-  ensurePin(user, String(body.pin ?? ''));
+  await ensurePin(user, String(body.pin ?? ''));
 
   const ctx = {
     role: user.role as Role,
@@ -975,7 +1085,11 @@ async function addGasTest(user: any, body: any, req: AnyRequest): Promise<void> 
   const current = await requirePermit(String(body.permitId ?? ''));
   ensurePermitVisibleToUser(user, current.permit);
   ensurePermission(user.role as Role, 'ADD_GAS_TEST');
-  ensurePin(user, String(body.pin ?? ''));
+  await ensurePin(user, String(body.pin ?? ''));
+
+  if (TERMINAL_STATUSES.includes(current.permit.status)) {
+    throw new Error('Permit đã ở trạng thái kết thúc – không thể ghi nhận gas test.');
+  }
 
   const input = body.record ?? {};
   if (!input.gasDetectorId || !input.calibrationDueDate || !input.location) {
@@ -990,8 +1104,8 @@ async function addGasTest(user: any, body: any, req: AnyRequest): Promise<void> 
     throw new Error('Máy dò đã hết hạn hiệu chuẩn – phép đo không có giá trị pháp lý.');
   }
 
-  const rawReadings = Array.isArray(input.readings) ? input.readings : [];
-  const readings = rawReadings.map((reading) => ({
+  const rawReadings: any[] = Array.isArray(input.readings) ? input.readings : [];
+  const readings = rawReadings.map((reading: any) => ({
     parameter: reading.parameter,
     value: Number(reading.value),
     unit: reading.unit,
@@ -1059,7 +1173,7 @@ async function acknowledgeSimops(user: any, body: any, req: AnyRequest): Promise
     throw new Error('Chỉ FPS / Deputy OIM / OIM được ghi nhận quyết định xử lý xung đột SIMOPS.');
   }
   ensurePermission(user.role as Role, 'REVIEW');
-  ensurePin(user, String(body.pin ?? ''));
+  await ensurePin(user, String(body.pin ?? ''));
 
   const current = await requirePermit(String(body.permitId ?? ''));
   ensurePermitVisibleToUser(user, current.permit);
@@ -1116,7 +1230,7 @@ async function acknowledgeSimops(user: any, body: any, req: AnyRequest): Promise
 async function requestRevision(user: any, body: any, req: AnyRequest): Promise<string> {
   operationalUser(user);
   ensurePermission(user.role as Role, 'REQUEST_REVISION');
-  ensurePin(user, String(body.pin ?? ''));
+  await ensurePin(user, String(body.pin ?? ''));
   const current = await requirePermit(String(body.permitId ?? ''));
   ensurePermitVisibleToUser(user, current.permit);
 
@@ -1245,7 +1359,7 @@ async function changeOwnPin(user: any, body: any, res: AnyResponse): Promise<any
 async function createUserAccount(user: any, body: any): Promise<void> {
   operationalUser(user);
   ensurePermission(user.role as Role, 'MANAGE_USERS');
-  ensurePin(user, String(body.operatorPin ?? ''));
+  await ensurePin(user, String(body.operatorPin ?? ''));
 
   const input = body.input ?? {};
   const username = normalizeUsername(String(input.username ?? ''));
@@ -1255,113 +1369,80 @@ async function createUserAccount(user: any, body: any): Promise<void> {
   if (username === normalizeUsername(user.username)) throw new Error('Không thể tạo lại chính tài khoản của bạn.');
   if (await getUserByUsername(username)) throw new Error('Username đã tồn tại trong danh bạ hệ thống.');
 
-  const created = await insertUser({
-    id: newId('U'),
-    username,
-    full_name: String(input.fullName ?? '').trim(),
-    role: input.role,
-    platform_code: input.platformCode ?? user.platform_code,
-    email: input.email || null,
-    phone: input.phone || null,
-    organization: input.organization || null,
-    certification_number: input.certificationNumber || null,
-    pin_hash: hashPinServer(initialPin),
-    active: true,
-    must_change_pin: true,
-    created_at: nowIso(),
-    created_by_user_id: user.id,
-    failed_login_count: 0,
-    locked_until: null,
-    session_version: 1,
-  });
-
-  await supabase('ptw_audit_log', {
-    method: 'POST',
-    body: JSON.stringify({
-      id: newId('AUDIT'),
-      permit_id: null,
-      permit_number: null,
-      actor_user_id: user.id,
-      actor_role: user.role,
-      event_type: 'UPDATED',
-      action: 'Tạo tài khoản người dùng ' + String(created.username),
-      from_status: null,
-      to_status: null,
-      device_ip: 'SERVER',
-      payload: { targetUserId: created.id, targetRole: created.role },
-      occurred_at: nowIso(),
-    }),
-  });
+  const newUserId = newId('U');
+  const created = await applyUserTransaction(
+    'insert',
+    {
+      id: newUserId,
+      username,
+      full_name: String(input.fullName ?? '').trim(),
+      role: input.role,
+      platform_code: input.platformCode ?? user.platform_code,
+      email: input.email || null,
+      phone: input.phone || null,
+      organization: input.organization || null,
+      certification_number: input.certificationNumber || null,
+      pin_hash: hashPinServer(initialPin),
+      active: true,
+      must_change_pin: true,
+      created_at: nowIso(),
+      created_by_user_id: user.id,
+      failed_login_count: 0,
+      locked_until: null,
+      session_version: 1,
+    },
+    accountAudit(user, 'Tạo tài khoản người dùng ' + username, 'SERVER', { targetUserId: newUserId, targetRole: input.role }),
+  );
+  void created;
 }
 
 async function changeUserPin(user: any, body: any): Promise<void> {
   operationalUser(user);
   ensurePermission(user.role as Role, 'MANAGE_USERS');
-  ensurePin(user, String(body.operatorPin ?? ''));
+  await ensurePin(user, String(body.operatorPin ?? ''));
   const userId = String(body.userId ?? '');
   const newPin = String(body.newPin ?? '');
   if (!validPin(newPin)) throw new Error('PIN mới phải là 4–8 chữ số.');
   const target = await getUserById(userId);
   if (!target) throw new Error('Không tìm thấy tài khoản đích.');
 
-  await updateUser(target.id, {
-    pin_hash: hashPinServer(newPin),
-    must_change_pin: true,
-    failed_login_count: 0,
-    locked_until: null,
-    session_version: Number(target.session_version) + 1,
-  });
-
-  await supabase('ptw_audit_log', {
-    method: 'POST',
-    body: JSON.stringify({
-      id: newId('AUDIT'),
-      permit_id: null,
-      permit_number: null,
-      actor_user_id: user.id,
-      actor_role: user.role,
-      event_type: 'UPDATED',
-      action: 'Cấp lại PIN tài khoản ' + target.username,
-      from_status: null,
-      to_status: null,
-      device_ip: 'SERVER',
-      payload: { targetUserId: target.id },
-      occurred_at: nowIso(),
-    }),
-  });
+  await applyUserTransaction(
+    'update',
+    {
+      id: target.id,
+      pin_hash: hashPinServer(newPin),
+      must_change_pin: true,
+      failed_login_count: 0,
+      locked_until: '',
+      session_version: Number(target.session_version) + 1,
+    },
+    accountAudit(user, 'Cấp lại PIN tài khoản ' + target.username, 'SERVER', { targetUserId: target.id }),
+  );
 }
 
 async function toggleUserActive(user: any, body: any, req: AnyRequest): Promise<void> {
   operationalUser(user);
   ensurePermission(user.role as Role, 'MANAGE_USERS');
-  ensurePin(user, String(body.operatorPin ?? ''));
+  await ensurePin(user, String(body.operatorPin ?? ''));
   const userId = String(body.userId ?? '');
   if (userId === user.id) throw new Error('Không thể khóa chính tài khoản đang đăng nhập.');
   const target = await getUserById(userId);
   if (!target) throw new Error('Không tìm thấy tài khoản đích.');
 
-  await updateUser(target.id, {
-    active: Boolean(body.active),
-    session_version: Number(target.session_version) + 1,
-  });
-
-  await supabase('ptw_audit_log', {
-    method: 'POST',
-    body: JSON.stringify({
-      id: newId('AUDIT'),
-      permit_id: null,
-      permit_number: null,
-      actor_user_id: user.id,
-      actor_role: user.role,
-      event_type: 'UPDATED',
-      action: (body.active ? 'Mở khóa' : 'Khóa') + ' tài khoản ' + target.username,
-      from_status: null,
-      to_status: null,
-      device_ip: clientIp(req),
-      payload: { targetUserId: target.id, active: Boolean(body.active) },
-      occurred_at: nowIso(),
-    }),
-  });
+  const active = Boolean(body.active);
+  await applyUserTransaction(
+    'update',
+    {
+      id: target.id,
+      active,
+      session_version: Number(target.session_version) + 1,
+      // Re-activating a locked account also clears the lockout so the admin's
+      // unlock takes effect immediately instead of leaving the user 429'd
+      // until the original lock window expires.
+      ...(active ? { locked_until: '', failed_login_count: 0 } : {}),
+    },
+    accountAudit(user, (active ? 'Mở khóa' : 'Khóa') + ' tài khoản ' + target.username, deviceIpFor(req), { targetUserId: target.id, active }),
+  );
 }
 
 async function markNotificationRead(user: any, body: any): Promise<void> {

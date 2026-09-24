@@ -40,6 +40,7 @@ export function GasTestPanel({ permit }: { permit: Permit }) {
   const [location, setLocation] = useState('');
   const [notes, setNotes] = useState('');
   const [readings, setReadings] = useState<DraftReadings>({ O2: '', LEL: '', H2S: '', CO: '' });
+  const [submitting, setSubmitting] = useState(false);
 
   const canAdd = useMemo(
     () => (currentUser ? canPerform(currentUser, permit, 'ADD_GAS_TEST').allowed : false),
@@ -50,6 +51,7 @@ export function GasTestPanel({ permit }: { permit: Permit }) {
   const draftAllPass = PARAMS.every((p) => liveResult(p, readings[p]) === 'PASS');
 
   const submit = async () => {
+    if (submitting) return;
     setError(null);
     if (!currentUser) return;
     if (!detectorId.trim() || !calDue || !location.trim()) {
@@ -62,31 +64,36 @@ export function GasTestPanel({ permit }: { permit: Permit }) {
       setError('Máy dò đã hết hạn hiệu chuẩn – phép đo không có giá trị pháp lý.');
       return;
     }
-    const res = await addGasTest(
-      permit.id,
-      {
-        readings: PARAMS.map((p) => ({
-          parameter: p,
-          value: Number(readings[p]),
-          unit: GAS_SPECS[p].unit,
-          min: GAS_SPECS[p].min,
-          max: GAS_SPECS[p].max,
-          result: evaluateReading(p, Number(readings[p])),
-        })),
-        gasDetectorId: detectorId.trim().toUpperCase(),
-        calibrationDueDate: new Date(calDue).toISOString(),
-        testedByUserId: currentUser.id,
-        testedByName: currentUser.fullName,
-        testedAt,
-        location: location.trim(),
-        notes: notes.trim() || undefined,
-      },
-      pin
-    );
-    if (!res.ok) { setError(res.error ?? 'Không ghi nhận được Gas Test.'); return; }
-    setPin(''); setDetectorId(''); setCalDue(''); setLocation(''); setNotes('');
-    setReadings({ O2: '', LEL: '', H2S: '', CO: '' });
-    setOpen(false);
+    setSubmitting(true);
+    try {
+      const res = await addGasTest(
+        permit.id,
+        {
+          readings: PARAMS.map((p) => ({
+            parameter: p,
+            value: Number(readings[p]),
+            unit: GAS_SPECS[p].unit,
+            min: GAS_SPECS[p].min,
+            max: GAS_SPECS[p].max,
+            result: evaluateReading(p, Number(readings[p])),
+          })),
+          gasDetectorId: detectorId.trim().toUpperCase(),
+          calibrationDueDate: new Date(calDue).toISOString(),
+          testedByUserId: currentUser.id,
+          testedByName: currentUser.fullName,
+          testedAt,
+          location: location.trim(),
+          notes: notes.trim() || undefined,
+        },
+        pin
+      );
+      if (!res.ok) { setError(res.error ?? 'Không ghi nhận được Gas Test.'); return; }
+      setPin(''); setDetectorId(''); setCalDue(''); setLocation(''); setNotes('');
+      setReadings({ O2: '', LEL: '', H2S: '', CO: '' });
+      setOpen(false);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -203,7 +210,7 @@ export function GasTestPanel({ permit }: { permit: Permit }) {
             <p className={`text-[11px] font-semibold ${draftAllPass && allFilled ? 'text-emerald-400' : 'text-amber-400'}`}>
               {allFilled ? (draftAllPass ? 'Engine dự kiến: PASS' : 'Engine dự kiến: FAIL — có chỉ số ngoài ngưỡng') : 'Chưa đủ 4 thông số'}
             </p>
-            <Button variant="success" onClick={submit}>Ký & gửi kết quả đo</Button>
+            <Button variant="success" onClick={submit} disabled={submitting}>{submitting ? 'Đang gửi…' : 'Ký & gửi kết quả đo'}</Button>
           </div>
         </div>
       </Modal>
