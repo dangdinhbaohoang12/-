@@ -21,6 +21,7 @@ jobs:
           cache-dependency-path: offshore-ptw/package-lock.json
       - run: npm ci --no-audit --no-fund
       - run: npm test
+      - run: npm run typecheck
       - run: npm run build
       - uses: actions/upload-artifact@v4
         with:

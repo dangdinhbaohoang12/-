@@ -292,7 +292,7 @@ export const EQUIPMENT_BY_AREA: Record<string, EquipmentItem[]> = (() => {
   const map: Record<string, EquipmentItem[]> = {};
   for (const area of AREAS) {
     const list = EQUIPMENT.filter((e) => e.areaId === area.id);
-    if (list.length > 0) map[area.code] = list;
+    if (list.length > 0) map[area.id] = list;
   }
   return map;
 })();

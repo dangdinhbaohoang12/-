@@ -10,7 +10,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
-import { PermitAction, ROLE_LABELS_VI, STATUS_LABELS_EN, User } from '../types/domain';
+import { ApprovalLevel, PermitAction, ROLE_LABELS_VI, STATUS_LABELS_EN, User } from '../types/domain';
 import { PERMIT_TYPE_CATALOG_MAP } from '../data/catalog';
 import { usePtwStore } from '../store/ptwStore';
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, FieldRow, inputClass, Modal, toButtonVariant } from '../components/ui/primitives';
@@ -19,7 +19,7 @@ import { GasTestPanel } from '../components/permit/GasTestPanel';
 import { AuditTrail } from '../components/permit/AuditTrail';
 import { SimopsBanner } from '../components/permit/SimopsBanner';
 import { STATUS_META, RISK_TONE } from '../lib/statusMeta';
-import { canPerform } from '../services/authorizationService';
+import { canPerform, canViewPermit } from '../services/authorizationService';
 import { detectSimopsConflicts } from '../engine/simopsEngine';
 import { Action } from '../store/ptwStore';
 import { formatTimestamp, minutesUntil } from '../lib/utils';
@@ -68,10 +68,16 @@ export function PermitDetailPage() {
       if (canPerform(currentUser, permit, ACTION_TO_PERMIT_ACTION[action]).allowed) list.push({ action, label, tone });
     };
     check('SUBMIT', '📤 Trình ký chuỗi phê duyệt', 'primary');
-    check('APPROVE_LINE_SUPERVISOR', '✔ Duyệt — Line Supervisor', 'success');
-    check('APPROVE_FPS', '✔ Duyệt — FPS', 'success');
-    check('APPROVE_DEPUTY_OIM', '✔ Duyệt — Deputy OIM', 'success');
-    check('APPROVE_OIM', '🔑 PHÁT HÀNH PTW — OIM', 'success');
+    const approvalActionByLevel: Record<ApprovalLevel, { action: Action; label: string }> = {
+      LINE_SUPERVISOR: { action: 'APPROVE_LINE_SUPERVISOR', label: '✔ Duyệt — Line Supervisor' },
+      FPS: { action: 'APPROVE_FPS', label: '✔ Duyệt — FPS' },
+      DEPUTY_OIM: { action: 'APPROVE_DEPUTY_OIM', label: '✔ Duyệt — Deputy OIM' },
+      OIM: { action: 'APPROVE_OIM', label: '🔑 PHÁT HÀNH PTW — OIM' },
+    };
+    if (permit.currentApprovalLevel) {
+      const approval = approvalActionByLevel[permit.currentApprovalLevel];
+      if (approval) check(approval.action, approval.label, 'success');
+    }
     check('REJECT', '❌ Từ chối permit', 'danger');
     check('RETURN_FOR_CLARIFICATION', '↩️ Trả về làm rõ', 'warning');
     check('START_WORK', '▶️ Bắt đầu thi công', 'primary');
@@ -84,6 +90,10 @@ export function PermitDetailPage() {
     check('CREATE_REVISION', '📝 Lập bản sửa đổi mới', 'primary');
     return list;
   }, [permit, currentUser, simulatedRole]);
+
+  if (permit && currentUser && !canViewPermit(currentUser, permit)) {
+    return <div className="py-20 text-center"><p className="text-lg font-bold">Bạn không có quyền xem hồ sơ permit này.</p><Link to="/permits" className="text-sm text-primary underline">← Về danh bạ PTW</Link></div>;
+  }
 
   if (!permit) {
     return (

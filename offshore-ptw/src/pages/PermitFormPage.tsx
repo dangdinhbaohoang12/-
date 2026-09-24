@@ -25,15 +25,15 @@ export function PermitFormPage() {
   const createDraft = usePtwStore((s) => s.createDraft);
   const permits = usePtwStore((s) => s.permits);
 
-  const nextNumber = useMemo(() => {
-    const year = new Date().getFullYear();
-    const nums = permits.filter((p) => p.platformCode === 'MT1').map((p) => Number(p.permitNumber.split('-').pop()));
-    return `MT1-PTW-${year}-${String(Math.max(0, ...nums) + 1).padStart(5, '0')}`;
-  }, [permits]);
-
   const [permitType, setPermitType] = useState<PermitTypeCode>('HOT_WORK');
   const [platform, setPlatform] = useState('MT1');
-  const [areaCode, setAreaCode] = useState('MH-DECK');
+  const [areaCode, setAreaCode] = useState(AREAS.find((a) => a.platformCode === 'MT1')?.code ?? '');
+
+  const nextNumber = useMemo(() => {
+    const year = new Date().getFullYear();
+    const nums = permits.filter((p) => p.platformCode === platform && p.permitNumber.startsWith(`${platform}-PTW-${year}-`)).map((p) => Number(p.permitNumber.split('-').pop())).filter(Number.isFinite);
+    return `${platform}-PTW-${year}-${String(Math.max(0, ...nums) + 1).padStart(6, '0')}`;
+  }, [permits, platform]);
   const [equipmentTag, setEquipmentTag] = useState('');
   const [description, setDescription] = useState('');
   const [reason, setReason] = useState('');
@@ -47,7 +47,8 @@ export function PermitFormPage() {
   if (!currentUser) return null;
   const catalog = PERMIT_TYPE_CATALOG_MAP[permitType];
   const areas = AREAS.filter((a) => a.platformCode === platform);
-  const equipmentList = EQUIPMENT_BY_AREA[areaCode] ?? [];
+  const currentAreaForView = areas.find((a) => a.code === areaCode);
+  const equipmentList = currentAreaForView ? (EQUIPMENT_BY_AREA[currentAreaForView.id] ?? []) : [];
   const effectiveRole = simulatedRole ?? currentUser.role;
   void effectiveRole;
 
@@ -81,7 +82,7 @@ export function PermitFormPage() {
         riskLevelAssessed: risk,
         areaCode,
         platformCode: platform,
-        safetyChecklistConfirmed: catalog.checklist.map((c) => ({ itemId: c.id, labelVi: c.labelVi, confirmed: true })),
+        safetyChecklistConfirmed: catalog.checklist.map((c) => ({ itemId: c.id, labelVi: c.labelVi, confirmed: !!checked[c.id] })),
       },
       pin,
     );
@@ -111,7 +112,11 @@ export function PermitFormPage() {
               </Select>
             </FieldRow>
             <FieldRow label="Giàn / Công trình">
-              <Select value={platform} onChange={setPlatform}>
+              <Select value={platform} onChange={(nextPlatform) => {
+                setPlatform(nextPlatform);
+                setAreaCode(AREAS.find((a) => a.platformCode === nextPlatform)?.code ?? '');
+                setEquipmentTag('');
+              }}>
                 {PLATFORMS.map((p) => <option key={p.code} value={p.code}>{p.name} ({p.code})</option>)}
               </Select>
             </FieldRow>

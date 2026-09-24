@@ -56,6 +56,7 @@ export function detectSimopsConflicts(candidate: Permit, allPermits: Permit[]): 
   for (const other of allPermits) {
     if (other.id === candidate.id) continue;
     if (!ACTIVE_LIFECYCLE_STATUSES.includes(other.status)) continue;
+    if (other.supersededByPermitId) continue;
     if (other.areaCode !== candidate.areaCode) continue;
     if (other.platformCode !== candidate.platformCode) continue;
     const overlap = timeOverlap(candidate, other);

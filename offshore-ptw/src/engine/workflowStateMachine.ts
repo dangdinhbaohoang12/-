@@ -21,6 +21,7 @@ import {
 import { checkPermission } from './rbacMatrix';
 import { hasValidGasTest } from './gasTestEngine';
 import { buildApprovalChain, ApprovalRule } from './approvalRuleEngine';
+import { getPermitTypeMeta } from '../data/catalog';
 
 export interface TransitionContext {
   role: Role;
@@ -176,6 +177,8 @@ export function approveAtCurrentLevel(permit: Permit, ctx: TransitionContext): T
   const auth = assertDecisionAuthority(permit, ctx, 'APPROVE');
   if (!auth.allowed || !auth.level) return { ok: false, error: auth.reason };
   const level = auth.level;
+  const now = ctx.now ?? new Date();
+  if (new Date(permit.plannedEnd).getTime() <= now.getTime()) return { ok: false, error: 'Permit đã quá thời hạn dự kiến – không thể hoàn tất phê duyệt.' };
 
   const next: Permit = {
     ...permit,
@@ -222,8 +225,12 @@ export function approveAtCurrentLevel(permit: Permit, ctx: TransitionContext): T
     }
     next.currentApprovalLevel = null;
     next.status = 'APPROVED';
-    next.approvedAt = (ctx.now ?? new Date()).toISOString();
-    next.validUntil = next.plannedEnd;
+    const approvedAt = now.toISOString();
+    next.approvedAt = approvedAt;
+    const validityHours = getPermitTypeMeta(next.permitType).validityHours;
+    const cappedUntil = new Date(now.getTime() + validityHours * 60 * 60_000);
+    const plannedEnd = new Date(next.plannedEnd);
+    next.validUntil = (cappedUntil.getTime() < plannedEnd.getTime() ? cappedUntil : plannedEnd).toISOString();
     next.statusHistory.push(
       historyEntry(next.statusHistory.length, permit.status, 'APPROVED', 'ISSUED', ctx, 'Hoàn tất chuỗi duyệt – phát hành permit')
     );
@@ -285,7 +292,8 @@ export function startWork(permit: Permit, ctx: TransitionContext): TransitionRes
   const perm = checkPermission(ctx.role, 'START_WORK');
   if (!perm.allowed) return { ok: false, error: perm.reason };
   const now = (ctx.now ?? new Date()).toISOString();
-  if (new Date(now).getTime() > new Date(permit.plannedEnd).getTime()) {
+  const validUntil = permit.validUntil ?? permit.plannedEnd;
+  if (new Date(now).getTime() > new Date(validUntil).getTime()) {
     return { ok: false, error: 'Permit đã quá thời hạn hiệu lực – không thể bắt đầu thi công (chuyển EXPIRED).' };
   }
   const next: Permit = {
@@ -403,7 +411,8 @@ export function cancelPermit(permit: Permit, ctx: TransitionContext): Transition
 export function expireIfNeeded(permit: Permit, now: Date): TransitionResult {
   const liveForExpiry: PermitStatus[] = ['APPROVED', 'WORK_IN_PROGRESS', 'SUSPENDED', 'RESUMED'];
   if (!liveForExpiry.includes(permit.status)) return { ok: true, permit };
-  if (new Date(permit.plannedEnd).getTime() > now.getTime()) return { ok: true, permit };
+  const expiryAt = permit.validUntil ?? permit.plannedEnd;
+  if (new Date(expiryAt).getTime() > now.getTime()) return { ok: true, permit };
   const systemCtx: TransitionContext = {
     role: 'PERMIT_CONTROLLER',
     userId: 'SYSTEM',

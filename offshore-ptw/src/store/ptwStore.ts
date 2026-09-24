@@ -25,6 +25,7 @@ import {
 } from '../types/domain';
 import {
   AREAS,
+  EQUIPMENT,
   PLATFORMS,
   SYSTEM_ACCOUNTS,
   getPermitTypeMeta,
@@ -80,9 +81,11 @@ interface PtwState {
   selectedPermitId: string | null;
   /** Vai trò đang được "giả lập" để demo phân quyền trên cùng một phiên trực. */
   simulatedRole: Role | null;
+  sessionDeviceIp: string | null;
 
   // === Auth ===
-  login: (username: string, pin: string, deviceIp?: string) => ActionResult;
+  login: (username: string, pin: string, deviceIp?: string) => ActionResult & { mustChangePin?: boolean };
+  changeOwnPin: (newPin: string, currentPin: string) => ActionResult;
   logout: () => void;
 
   // === Quản lý tài khoản – CHỈ OIM ===
@@ -157,7 +160,7 @@ interface PtwState {
 
 /* --------------------------- helpers nội bộ ------------------------------ */
 
-const DEFAULT_IP = '10.20.30.44';
+const DEFAULT_IP = 'UNKNOWN';
 
 /** ID duy nhất chống trùng (timestamp base36 + ngẫu nhiên) – không cần polyfill crypto. */
 export function newId(): string {
@@ -213,12 +216,12 @@ function approverIdsForLevel(chainRole: Role, users: UserAccount[]): string[] {
   return users.filter((u) => u.role === chainRole && u.active).map((u) => u.id);
 }
 
-function transitionCtxFrom(user: UserAccount, pinOkComment?: string, now?: Date): TransitionContext {
+function transitionCtxFrom(user: UserAccount, pinOkComment?: string, now?: Date, deviceIp = DEFAULT_IP): TransitionContext {
   return {
     role: user.role,
     userId: user.id,
     userName: user.fullName,
-    deviceIp: DEFAULT_IP,
+    deviceIp,
     comment: pinOkComment,
     now,
   };
@@ -235,7 +238,28 @@ function applyTransitionResult(
   if (!result.ok || !result.permit) return { ok: false, error: result.error };
   const after = result.permit;
   const state = get();
-  const permits = state.permits.map((p) => (p.id === permitId ? after : p));
+  let permits = state.permits.map((p) => (p.id === permitId ? after : p));
+  if (after.status === 'APPROVED' && after.parentPermitId) {
+    const previous = permits.find((p) => p.id === after.parentPermitId);
+    if (previous && !previous.supersededByPermitId) {
+      const now = nowIso();
+      permits = permits.map((p) => p.id === previous.id ? {
+        ...p,
+        supersededByPermitId: after.id,
+        statusHistory: [...p.statusHistory, {
+          id: newId(), sequence: p.statusHistory.length,
+          fromStatus: p.status, toStatus: p.status,
+          eventType: 'REVISION_CREATED',
+          userId: after.createdById, userName: after.applicantName,
+          userRole: 'PERMIT_CONTROLLER',
+          action: 'Bản permit này đã được thay thế bởi Revision mới đã phát hành',
+          deviceIp: DEFAULT_IP,
+          newValues: { supersededByPermitId: after.id }, timestamp: now,
+        }],
+        updatedAt: now,
+      } : p);
+    }
+  }
 
   let notifications = state.notifications;
   switch (after.status) {
@@ -299,23 +323,35 @@ export const usePtwStore = create<PtwState>()(
       notifications: [],
       selectedPermitId: null,
       simulatedRole: null,
+      sessionDeviceIp: null,
 
       /* ================================ AUTH =============================== */
 
-      login: (username, pin, _deviceIp) => {
+      login: (username, pin, deviceIp) => {
         const state = get();
         const account = state.users.find((u) => u.username.toLowerCase() === username.trim().toLowerCase());
         if (!account) return { ok: false, error: 'Tài khoản không tồn tại trong hệ thống.' };
         if (!account.active) return { ok: false, error: 'Tài khoản đã bị khóa. Liên hệ Giàn trưởng.' };
         if (!verifyPin(account, pin)) return { ok: false, error: 'Mã PIN không đúng.' };
-        const users = state.users.map((u) =>
-          u.id === account.id ? { ...u, lastLoginAt: nowIso() } : u
-        );
-        set({ currentUser: { ...account, lastLoginAt: nowIso() }, users });
+        const loggedIn = { ...account, lastLoginAt: nowIso() };
+        const users = state.users.map((u) => u.id === account.id ? loggedIn : u);
+        set({ currentUser: loggedIn, users, sessionDeviceIp: deviceIp?.trim() || null });
+        return { ok: true, mustChangePin: loggedIn.mustChangePin };
+      },
+
+      changeOwnPin: (newPin, currentPin) => {
+        const state = get();
+        const actor = state.currentUser;
+        if (!actor) return { ok: false, error: 'Phiên làm việc chưa xác thực.' };
+        if (!verifyPin(actor, currentPin)) return { ok: false, error: 'PIN hiện tại không đúng.' };
+        if (!/^\d{4,8}$/.test(newPin)) return { ok: false, error: 'PIN mới phải là 4–8 chữ số.' };
+        if (verifyPin(actor, newPin)) return { ok: false, error: 'PIN mới phải khác PIN hiện tại.' };
+        const updated = { ...actor, pinHash: hashPin(newPin), mustChangePin: false };
+        set({ users: state.users.map((u) => u.id === actor.id ? updated : u), currentUser: updated });
         return { ok: true };
       },
 
-      logout: () => set({ currentUser: null, selectedPermitId: null, simulatedRole: null }),
+      logout: () => set({ currentUser: null, selectedPermitId: null, simulatedRole: null, sessionDeviceIp: null }),
 
       /* ========================= USER ADMIN (OIM ONLY) ===================== */
 
@@ -411,6 +447,11 @@ export const usePtwStore = create<PtwState>()(
 
         const area = AREAS.find((a) => a.id === data.areaId);
         if (!area) return { ok: false, error: 'Khu vực không tồn tại trong danh mục giàn.' };
+        if (data.platformCode && data.platformCode !== area.platformCode) return { ok: false, error: 'Khu vực không thuộc đúng giàn (Platform) đã chọn.' };
+        if (data.equipmentTag && data.equipmentTag !== 'N/A') {
+          const equipment = EQUIPMENT.find((e) => e.tag === data.equipmentTag);
+          if (!equipment || equipment.areaId !== area.id) return { ok: false, error: 'Thiết bị không thuộc khu vực đã chọn.' };
+        }
         if (!PLATFORMS.some((p) => p.code === area.platformCode)) {
           return { ok: false, error: 'Giàn (Platform) không hợp lệ.' };
         }
@@ -450,6 +491,7 @@ export const usePtwStore = create<PtwState>()(
           areaName: area.name,
           equipmentTag: data.equipmentTag ?? '',
           workDescription: data.workDescription!.trim(),
+          reasonForIssuing: data.reasonForIssuing?.trim(),
           contractorCompany: data.contractorCompany ?? 'Nội bộ Vận hành',
           companyDepartment: data.companyDepartment ?? 'Operations',
           applicantUserId: actor.id,
@@ -513,9 +555,34 @@ export const usePtwStore = create<PtwState>()(
           'permitNumber', 'id', 'status', 'approvalChain', 'statusHistory', 'revisions', 'createdAt', 'createdById',
         ];
         for (const f of protectedFields) delete (patch as Record<string, unknown>)[f as string];
+        const candidateAreaId = patch.areaId ?? permit.areaId;
+        const candidateArea = AREAS.find((a) => a.id === candidateAreaId);
+        if (!candidateArea) return { ok: false, error: 'Khu vực không tồn tại trong danh mục giàn.' };
+        const candidatePermitType = patch.permitType ?? permit.permitType;
+        const candidateCriticalWork = patch.criticalWork ?? permit.criticalWork;
+        const candidateMeta = getPermitTypeMeta(candidatePermitType);
+        const candidateEquipmentTag = patch.equipmentTag ?? permit.equipmentTag;
+        if (candidateEquipmentTag && candidateEquipmentTag !== 'N/A') {
+          const equipment = EQUIPMENT.find((e) => e.tag === candidateEquipmentTag);
+          if (!equipment || equipment.areaId !== candidateArea.id) return { ok: false, error: 'Thiết bị không thuộc khu vực đã chọn.' };
+        }
+        const candidateClassifications = Array.from(new Set([
+          ...candidateMeta.workClassifications,
+          ...(candidateArea.hazardous ? (['HIGH_RISK_AREA'] as const) : []),
+          ...(candidateCriticalWork ? (['CRITICAL'] as const) : []),
+        ])) as Permit['workClassifications'];
         const updated: Permit = {
           ...permit,
           ...patch,
+          permitType: candidatePermitType,
+          platformCode: candidateArea.platformCode,
+          areaId: candidateArea.id,
+          areaCode: candidateArea.code,
+          areaName: candidateArea.name,
+          equipmentTag: candidateEquipmentTag,
+          criticalWork: candidateCriticalWork,
+          workClassifications: candidateClassifications,
+          requiresGasTest: candidateMeta.requiresGasTest,
           updatedAt: nowIso(),
           statusHistory: [
             ...permit.statusHistory,
@@ -555,7 +622,7 @@ export const usePtwStore = create<PtwState>()(
         if (!permit) return { ok: false, error: 'Không tìm thấy permit.' };
         if (!verifyPin(actor, pin)) return { ok: false, error: 'PIN điện tử không đúng – hành động bị ghi log thất bại.' };
 
-        const ctx = transitionCtxFrom(actor, comment);
+        const ctx = transitionCtxFrom(actor, comment, undefined, state.sessionDeviceIp ?? DEFAULT_IP);
         const sig = signPayload(permit, actor, kind, pin);
 
         const withSig = <R extends { ok: boolean; permit?: Permit }>(r: R): R => {
@@ -753,8 +820,16 @@ export const usePtwStore = create<PtwState>()(
           id: newId(),
           revisionNo: permit.revisionNo + 1,
           parentPermitId: permit.id,
+          previousRevisionOfPermitId: permit.id,
           revisionReason: reason.trim(),
           status: 'DRAFT',
+          supersededByPermitId: undefined,
+          actualStart: undefined,
+          actualEnd: undefined,
+          approvedAt: undefined,
+          validUntil: undefined,
+          suspensionReason: undefined,
+          closureNotes: undefined,
           currentApprovalLevel: null,
           approvalChain: buildApprovalChain({
             permitType: permit.permitType,
@@ -875,17 +950,19 @@ export const usePtwStore = create<PtwState>()(
       name: 'offshore-ptw-v2',
       partialize: (state) => ({
         permits: state.permits,
+        users: state.users,
         notifications: state.notifications,
         selectedPermitId: null,
         currentUser: null,
         simulatedRole: null,
+        sessionDeviceIp: null,
       }),
       merge: (persisted, current) => ({
         ...current,
         ...(persisted as Partial<PtwState>),
-        users: current.users,
         currentUser: null,
         simulatedRole: null,
+        sessionDeviceIp: null,
       }),
     }
   )

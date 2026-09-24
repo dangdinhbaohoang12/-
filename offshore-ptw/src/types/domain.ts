@@ -367,6 +367,8 @@ export interface Permit {
   parentPermitId?: string;
   /** Liên kết Rev trước (id của permit bản cũ khi tạo Revision). */
   previousRevisionOfPermitId?: string;
+  /** ID của Revision mới đã thay thế bản này. */
+  supersededByPermitId?: string;
   revisionReason?: string;
 
   platformCode: string;

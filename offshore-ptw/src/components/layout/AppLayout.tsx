@@ -27,6 +27,7 @@ export function AppLayout() {
   const simulatedRole = usePtwStore((s) => s.simulatedRole);
   const setSimulatedRole = usePtwStore((s) => s.setSimulatedRole);
   const logout = usePtwStore((s) => s.logout);
+  const changeOwnPin = usePtwStore((s) => s.changeOwnPin);
   const notifications = usePtwStore((s) => s.notifications);
   const refreshExpiries = usePtwStore((s) => s.refreshExpiries);
   const [showQr, setShowQr] = useState(false);
@@ -119,10 +120,42 @@ export function AppLayout() {
         <main className="flex-1 overflow-x-hidden p-6">
           <Outlet />
         </main>
+        {currentUser.mustChangePin && <RequiredPinChangeModal onChange={changeOwnPin} />}
         <footer className="border-t border-border px-6 py-3 text-[10px] text-muted-foreground">
           OFFSHORE PTW v2.0 · Safety-Critical Permit To Work Management · Audit trail append-only.
         </footer>
       </div>
     </div>
   );
+}
+
+
+function RequiredPinChangeModal({ onChange }: {
+  onChange: (newPin: string, currentPin: string) => { ok: boolean; error?: string };
+}) {
+  const [currentPin, setCurrentPin] = useState('');
+  const [newPin, setNewPin] = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const submit = () => {
+    setError(null);
+    if (!/^\d{4,8}$/.test(newPin)) return setError('PIN mới phải là 4–8 chữ số.');
+    if (newPin !== confirmPin) return setError('PIN xác nhận không khớp.');
+    const result = onChange(newPin, currentPin);
+    if (!result.ok) return setError(result.error ?? 'Không thể đổi PIN.');
+    setCurrentPin(''); setNewPin(''); setConfirmPin('');
+  };
+  return <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4">
+    <div className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl">
+      <p className="text-lg font-black">🔐 Bắt buộc đổi PIN</p>
+      <p className="mt-1 text-sm text-muted-foreground">Phải đổi PIN trước khi tiếp tục sử dụng hệ thống.</p>
+      <div className="mt-5 space-y-3">
+        <input aria-label="PIN hiện tại" type="password" inputMode="numeric" maxLength={8} className="h-10 w-full rounded-lg border border-input bg-input/40 px-3" value={currentPin} onChange={(e) => setCurrentPin(e.target.value.replace(/\D/g, ''))} />
+        <input aria-label="PIN mới" type="password" inputMode="numeric" maxLength={8} className="h-10 w-full rounded-lg border border-input bg-input/40 px-3" value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))} />
+        <input aria-label="Xác nhận PIN mới" type="password" inputMode="numeric" maxLength={8} className="h-10 w-full rounded-lg border border-input bg-input/40 px-3" value={confirmPin} onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ''))} />
+        {error && <p className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">⛔ {error}</p>}
+        <button type="button" onClick={submit} className="w-full rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground">Đổi PIN & tiếp tục</button>
+      </div>
+    </div>
+  </div>;
 }
