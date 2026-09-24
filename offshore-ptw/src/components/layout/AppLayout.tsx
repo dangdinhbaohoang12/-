@@ -103,7 +103,7 @@ export function AppLayout() {
             <button type="button" onClick={() => navigate('/permits')} className="relative rounded-lg border border-border px-2 py-1 text-xs hover:bg-muted" title="Thông báo">
               🔔 {unread > 0 && <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-600 px-1 text-[9px] font-bold text-white">{unread}</span>}
             </button>
-            <button type="button" onClick={() => { logout(); navigate('/login'); }} className="rounded-lg bg-muted px-3 py-1 text-xs font-semibold hover:bg-border">
+            <button type="button" onClick={() => { void logout(); navigate('/login'); }} className="rounded-lg bg-muted px-3 py-1 text-xs font-semibold hover:bg-border">
               Đăng xuất
             </button>
           </div>
@@ -131,17 +131,17 @@ export function AppLayout() {
 
 
 function RequiredPinChangeModal({ onChange }: {
-  onChange: (newPin: string, currentPin: string) => { ok: boolean; error?: string };
+  onChange: (newPin: string, currentPin: string) => Promise<{ ok: boolean; error?: string }>;
 }) {
   const [currentPin, setCurrentPin] = useState('');
   const [newPin, setNewPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const submit = () => {
+  const submit = async () => {
     setError(null);
     if (!/^\d{4,8}$/.test(newPin)) return setError('PIN mới phải là 4–8 chữ số.');
     if (newPin !== confirmPin) return setError('PIN xác nhận không khớp.');
-    const result = onChange(newPin, currentPin);
+    const result = await onChange(newPin, currentPin);
     if (!result.ok) return setError(result.error ?? 'Không thể đổi PIN.');
     setCurrentPin(''); setNewPin(''); setConfirmPin('');
   };
