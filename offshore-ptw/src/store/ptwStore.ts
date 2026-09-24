@@ -824,8 +824,8 @@ const permitNumber = `${area.platformCode}-PTW-${year}-${String(seq).padStart(6,
         if (!verifyPin(actor, pin)) return { ok: false, error: 'PIN điện tử không đúng.' };
         if (!reason.trim()) return { ok: false, error: 'Lý do revision là bắt buộc.' };
         const children = state.permits.filter((p) => p.parentPermitId === permitId);
-        if (children.some((p) =>
-          ['DRAFT', 'SUBMITTED', 'LINE_SUPERVISOR_REVIEW', 'FPS_REVIEW', 'DEPUTY_OIM_REVIEW', 'OIM_REVIEW', 'RETURNED'].includes(p.status))) {
+        if (permit.supersededByPermitId || children.some((p) =>
+          ACTIVE_LIFECYCLE_STATUSES.includes(p.status) || ['DRAFT', 'RETURNED'].includes(p.status))) {
           return { ok: false, error: 'Permit đã có Revision đang chờ phê duyệt.' };
         }
 
