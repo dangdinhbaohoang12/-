@@ -21,6 +21,11 @@ const permit=(o:Partial<Permit>={}):Permit=>({
  acknowledgedConflictIds:[],statusHistory:[],revisions:[],createdAt:'2026-09-24T09:00:00.000Z',
  updatedAt:'2026-09-24T09:00:00.000Z',createdById:'U1',...o
 });
+const oim: UserAccount = {
+  id: 'OIM-1', username: 'oim', fullName: 'OIM', role: 'OIM', platformCode: 'MT1',
+  pinHash: hashPin('1234'), active: true, mustChangePin: false,
+  createdAt: '2026-09-24T09:00:00.000Z', createdByUserId: 'SYSTEM',
+};
 describe('RBAC',()=>it('denies administrator approval',()=>expect(checkPermission('ADMINISTRATOR','APPROVE').allowed).toBe(false)));
 describe('Approval',()=>it('requires four levels for critical work',()=>expect(buildApprovalChain({permitType:'COLD_WORK',riskLevel:'LOW',areaHazardous:false,criticalWork:true,workClassifications:['ROUTINE','CRITICAL']}).chain.filter(s=>s.required).map(s=>s.level)).toEqual(['LINE_SUPERVISOR','FPS','DEPUTY_OIM','OIM'])));
 describe('Gas',()=>{
@@ -75,16 +80,11 @@ describe('Revision lifecycle', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-24T10:00:00.000Z'));
     try {
-      const actor: UserAccount = {
-        id: 'OIM-1', username: 'oim', fullName: 'OIM', role: 'OIM', platformCode: 'MT1',
-        pinHash: hashPin('1234'), active: true, mustChangePin: false,
-        createdAt: '2026-09-24T09:00:00.000Z', createdByUserId: 'SYSTEM',
-      };
       const issued = permit({
         status: 'APPROVED', riskLevel: 'HIGH', validUntil: '2026-09-24T22:00:00.000Z',
         plannedEnd: '2026-09-25T10:00:00.000Z',
       });
-      usePtwStore.setState({ permits: [issued], currentUser: actor });
+      usePtwStore.setState({ permits: [issued], currentUser: oim });
 
       const request = usePtwStore.getState().requestRevision(issued.id, 'Change scope', '1234');
       expect(request.ok).toBe(true);
@@ -113,10 +113,60 @@ describe('Revision lifecycle', () => {
       });
       expect(retired.statusHistory.at(-1)).toMatchObject({
         fromStatus: 'APPROVED', toStatus: 'CANCELLED',
+        userId: oim.id, userName: oim.fullName, userRole: oim.role,
       });
       expect(usePtwStore.getState().permits.find((p) => p.id === revision.id)?.status).toBe('APPROVED');
     } finally {
       vi.useRealTimers();
+      usePtwStore.setState({ permits: [], currentUser: null });
+    }
+  });
+
+  it.each(['CLOSED', 'EXPIRED'] as const)('links an approved revision without cancelling a %s parent', (terminalStatus) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-24T10:00:00.000Z'));
+    try {
+      const issued = permit({ status: 'APPROVED', riskLevel: 'HIGH' });
+      usePtwStore.setState({ permits: [issued], currentUser: oim });
+      const request = usePtwStore.getState().requestRevision(issued.id, 'Change scope', '1234');
+      expect(request.ok).toBe(true);
+      const parent = usePtwStore.getState().permits.find((p) => p.id === issued.id)!;
+      const revision = usePtwStore.getState().permits.find((p) => p.id === request.newPermitId)!;
+      const terminalParent = { ...parent, status: terminalStatus };
+      usePtwStore.setState({ permits: [terminalParent, {
+        ...revision, status: 'OIM_REVIEW', currentApprovalLevel: 'OIM',
+        approvalChain: revision.approvalChain.map((step) => step.required && step.level !== 'OIM'
+          ? { ...step, status: 'DONE' as const }
+          : step),
+      }] });
+
+      expect(usePtwStore.getState().runTransition(revision.id, 'APPROVE', '1234').ok).toBe(true);
+      const linked = usePtwStore.getState().permits.find((p) => p.id === issued.id)!;
+      expect(linked.status).toBe(terminalStatus);
+      expect(linked.supersededByPermitId).toBe(revision.id);
+      expect(linked.statusHistory).toEqual(terminalParent.statusHistory);
+    } finally {
+      vi.useRealTimers();
+      usePtwStore.setState({ permits: [], currentUser: null });
+    }
+  });
+
+  it('numbers a new revision after previously rejected children', () => {
+    const issued = permit({ status: 'APPROVED' });
+    usePtwStore.setState({ permits: [issued], currentUser: oim });
+    try {
+      const first = usePtwStore.getState().requestRevision(issued.id, 'First change', '1234');
+      expect(first.ok).toBe(true);
+      usePtwStore.setState({ permits: usePtwStore.getState().permits.map((p) =>
+        p.id === first.newPermitId ? { ...p, status: 'REJECTED' } : p
+      ) });
+
+      const second = usePtwStore.getState().requestRevision(issued.id, 'Second change', '1234');
+      expect(second.ok).toBe(true);
+      const children = usePtwStore.getState().permits.filter((p) => p.parentPermitId === issued.id);
+      expect(children.map((p) => p.revisionNo)).toEqual([1, 2]);
+      expect(children[1].statusHistory[0].newValues).toEqual({ revision: 'Rev 2' });
+    } finally {
       usePtwStore.setState({ permits: [], currentUser: null });
     }
   });
