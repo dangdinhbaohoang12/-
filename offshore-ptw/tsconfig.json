@@ -16,15 +16,7 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "strict": true,
-    "noFallthroughCasesInSwitch": true,
-    "typeRoots": [
-      "./node_modules/@types",
-      "./node_modules"
-    ],
-    "types": [
-      "vite/client",
-      "vitest/globals"
-    ]
+    "noFallthroughCasesInSwitch": true
   },
   "include": [
     "src"
