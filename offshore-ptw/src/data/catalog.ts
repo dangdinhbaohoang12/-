@@ -14,7 +14,7 @@ import {
   PermitTypeCode,
   PermitTypeMeta,
   Platform,
-} from '../types/domain';
+} from '../types/domain.js';
 
 /* ------------------------------ DANH MỤC GIÀN ---------------------------- */
 

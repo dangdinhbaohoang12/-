@@ -7,8 +7,8 @@
  * quyền đánh giá & ghi nhận quyết định (acknowledge) trước khi submit.
  * ==========================================================================*/
 
-import { Permit, PermitTypeCode, SimopsConflict } from '../types/domain';
-import { ACTIVE_LIFECYCLE_STATUSES } from '../types/domain';
+import { Permit, PermitTypeCode, SimopsConflict } from '../types/domain.js';
+import { ACTIVE_LIFECYCLE_STATUSES } from '../types/domain.js';
 
 /** Ma trận tương thích SIMOPS: NONE < INFO < WARNING < BLOCK. */
 export const SIMOPS_MATRIX: Record<PermitTypeCode, Partial<Record<PermitTypeCode, 'NONE' | 'INFO' | 'WARNING' | 'BLOCK'>>> = {

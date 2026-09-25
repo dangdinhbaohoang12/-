@@ -10,7 +10,7 @@
  * Máy đo phải còn hạn hiệu chuẩn tại thời điểm đo.
  * ==========================================================================*/
 
-import { GasParameter, GasTestRecord, TestResult } from '../types/domain';
+import { GasParameter, GasTestRecord, TestResult } from '../types/domain.js';
 
 export interface GasSpec {
   parameter: GasParameter;

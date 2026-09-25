@@ -17,11 +17,11 @@ import {
   Permit,
   PermitStatus,
   Role,
-} from '../types/domain';
-import { checkPermission } from './rbacMatrix';
-import { hasValidGasTest } from './gasTestEngine';
-import { buildApprovalChain, ApprovalRule } from './approvalRuleEngine';
-import { getPermitTypeMeta } from '../data/catalog';
+} from '../types/domain.js';
+import { checkPermission } from './rbacMatrix.js';
+import { hasValidGasTest } from './gasTestEngine.js';
+import { buildApprovalChain, ApprovalRule } from './approvalRuleEngine.js';
+import { getPermitTypeMeta } from '../data/catalog.js';
 
 export interface TransitionContext {
   role: Role;
