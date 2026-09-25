@@ -104,6 +104,16 @@ const readings = [
 ];
 
 describe('server controlled security evidence', () => {
+  it.each(['LINE_SUPERVISOR', 'PERMIT_APPLICANT'])('rejects %s moving a draft to another platform', async (role) => {
+    userRows[0].role = role;
+    permitRows[0].data.applicantUserId = 'oim';
+    const response = await post({ operation: 'UPDATE_DRAFT', permitId: 'permit', pin: operatorPin,
+      patch: { areaId: 'MT2-WHP' } });
+    expect(response.status).toBe(400);
+    expect(response.body.error).toContain('phạm vi giàn');
+    expect(transactions).toHaveLength(0);
+  });
+
   it('limits concurrent PIN derivations to one', async () => {
     const responses = await Promise.all([
       post({ operation: 'CHANGE_OWN_PIN', currentPin: '0000', newPin: '87654321' }),

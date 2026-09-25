@@ -937,6 +937,12 @@ async function updateDraft(user: any, body: any, req: AnyRequest): Promise<void>
 
   const candidateArea = AREAS.find((area) => area.id === (patch.areaId ?? current.permit.areaId));
   if (!candidateArea) badRequest('Khu vực không tồn tại trong danh mục giàn.');
+  if (
+    (user.role === 'LINE_SUPERVISOR' || user.role === 'PERMIT_APPLICANT') &&
+    candidateArea.platformCode !== user.platform_code
+  ) {
+    badRequest('Tài khoản của bạn chỉ được sửa permit trong phạm vi giàn được cấp phép.');
+  }
   const candidatePermitType = (patch.permitType ?? current.permit.permitType) as string;
   const candidateCriticalWork = Boolean(patch.criticalWork ?? current.permit.criticalWork);
   const candidateEquipmentTag = (patch.equipmentTag ?? current.permit.equipmentTag) as string;

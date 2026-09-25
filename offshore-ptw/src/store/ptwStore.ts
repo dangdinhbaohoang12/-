@@ -112,6 +112,7 @@ function isAuthError(error: unknown): boolean {
  * dropped instead of reverting the UI to older data.
  */
 let latestStateToken = 0;
+let lastAppliedStateToken = 0;
 const pendingLogouts = new Set<Promise<unknown>>();
 function nextStateToken(): number {
   latestStateToken += 1;
@@ -129,7 +130,8 @@ function applyState(
     notifications: AppNotification[];
   },
 ): void {
-  if (token !== latestStateToken) return;
+  if (token < lastAppliedStateToken) return;
+  lastAppliedStateToken = token;
   set({
     permits: state.permits,
     users: state.users,
@@ -204,7 +206,7 @@ export const usePtwStore = create<PtwState>((set, get) => ({
   logout: async () => {
     // Bump the token so any state snapshot already in flight (hydrate/login)
     // is dropped instead of clobbering the cleared state set below.
-    nextStateToken();
+    lastAppliedStateToken = nextStateToken();
     // Clear local state immediately so any navigation that happens right
     // after calling logout() (e.g. AppLayout's `void logout(); navigate(...)`)
     // never renders the previous session's dashboard while the LOGOUT
