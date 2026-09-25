@@ -55,9 +55,17 @@ const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const MAX_LOGIN_FAILURES = 5;
 const LOGIN_LOCK_MS = 15 * 60 * 1000;
 
+function configurationError(detail: string): never {
+  const error = new Error('Cấu hình backend chưa đầy đủ.');
+  (error as any).status = 503;
+  (error as any).code = 'PTW_CONFIG_ERROR';
+  (error as any).detail = detail;
+  throw error;
+}
+
 function requiredEnv(name: string): string {
   const value = process.env[name];
-  if (!value) throw new Error('Missing required server environment variable: ' + name);
+  if (!value) configurationError('Thiếu biến môi trường máy chủ: ' + name);
   return value;
 }
 
@@ -71,18 +79,34 @@ const PLACEHOLDER_SECRET_VALUES = new Set([
 function requiredSecret(name: string, minLength = 32): string {
   const value = requiredEnv(name);
   if (PLACEHOLDER_SECRET_VALUES.has(value) || value.length < minLength) {
-    throw new Error(
-      'Environment variable ' + name + ' is missing, a template placeholder, or too short (' +
-      'min ' + minLength + ' chars). Generate and set a real random secret before deploying.'
+    configurationError(
+      'Biến môi trường ' + name + ' chưa được cấu hình bằng một giá trị bí mật hợp lệ.'
     );
   }
   return value;
 }
 
-const SUPABASE_URL = requiredEnv('SUPABASE_URL').replace(/\/+$/, '');
-const SUPABASE_SERVICE_ROLE_KEY = requiredSecret('SUPABASE_SERVICE_ROLE_KEY', 20);
-const PTW_SESSION_SECRET = requiredSecret('PTW_SESSION_SECRET');
-const PTW_AUDIT_SECRET = requiredSecret('PTW_AUDIT_SECRET');
+interface ServerConfig {
+  supabaseUrl: string;
+  supabaseServiceRoleKey: string;
+  ptwSessionSecret: string;
+  ptwAuditSecret: string;
+}
+
+/**
+ * Resolve configuration on first use instead of during module import.
+ * Vercel can then catch configuration failures in the request handler and
+ * return the normal JSON error shape instead of terminating the function
+ * before the request handler runs.
+ */
+function getServerConfig(): ServerConfig {
+  return {
+    supabaseUrl: requiredEnv('SUPABASE_URL').replace(/\/+$/, ''),
+    supabaseServiceRoleKey: requiredSecret('SUPABASE_SERVICE_ROLE_KEY', 20),
+    ptwSessionSecret: requiredSecret('PTW_SESSION_SECRET'),
+    ptwAuditSecret: requiredSecret('PTW_AUDIT_SECRET'),
+  };
+}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -176,7 +200,7 @@ function signSession(userId: string, sessionVersion: number): string {
     sv: sessionVersion,
     exp: Date.now() + SESSION_TTL_MS,
   });
-  const sig = createHmac('sha256', PTW_SESSION_SECRET).update(payload).digest('base64url');
+  const sig = createHmac('sha256', getServerConfig().ptwSessionSecret).update(payload).digest('base64url');
   return payload + '.' + sig;
 }
 
@@ -184,7 +208,7 @@ function verifySessionToken(token: string): { uid: string; sv: number; exp: numb
   const pieces = token.split('.');
   if (pieces.length !== 2) return null;
   const payload = pieces[0];
-  const expectedSig = createHmac('sha256', PTW_SESSION_SECRET).update(payload).digest('base64url');
+  const expectedSig = createHmac('sha256', getServerConfig().ptwSessionSecret).update(payload).digest('base64url');
   const left = Buffer.from(pieces[1]);
   const right = Buffer.from(expectedSig);
   if (left.length !== right.length || !timingSafeEqual(left, right)) return null;
@@ -233,12 +257,13 @@ function deviceIpFor(req: AnyRequest): string {
 }
 
 async function supabase(path: string, init: RequestInit = {}): Promise<any> {
+  const { supabaseUrl, supabaseServiceRoleKey } = getServerConfig();
   const headers = new Headers(init.headers);
-  headers.set('apikey', SUPABASE_SERVICE_ROLE_KEY);
-  headers.set('Authorization', 'Bearer ' + SUPABASE_SERVICE_ROLE_KEY);
+  headers.set('apikey', supabaseServiceRoleKey);
+  headers.set('Authorization', 'Bearer ' + supabaseServiceRoleKey);
   headers.set('Content-Type', 'application/json');
   if (!headers.has('Prefer')) headers.set('Prefer', 'return=representation');
-  const response = await fetch(SUPABASE_URL + '/rest/v1/' + path, {
+  const response = await fetch(supabaseUrl + '/rest/v1/' + path, {
     ...init,
     headers,
   });
@@ -611,10 +636,14 @@ function errorStatus(error: unknown): number {
 
 function sendError(res: AnyResponse, error: unknown): void {
   const status = errorStatus(error);
-  sendJson(res, status, {
-    ok: false,
-    error: status === 500 ? 'Lỗi máy chủ – kiểm tra cấu hình backend/database.' : String((error as any)?.message ?? 'Yêu cầu thất bại.'),
-  });
+  const code = String((error as any)?.code ?? '');
+  const message =
+    code === 'PTW_CONFIG_ERROR'
+      ? 'Backend chưa được cấu hình đầy đủ trên Vercel.'
+      : status === 500
+        ? 'Lỗi máy chủ – kiểm tra cấu hình backend/database.'
+        : String((error as any)?.message ?? 'Yêu cầu thất bại.');
+  sendJson(res, status, { ok: false, error: message });
 }
 
 function serverAudit(permit: Permit, entry: StatusHistoryEntry): Record<string, unknown> {
@@ -644,7 +673,7 @@ function historyAuditEntries(before: Permit, after: Permit): Record<string, unkn
 }
 
 function signApproval(permit: Permit, actor: any, action: string, decidedAt: string): string {
-  return createHmac('sha256', PTW_AUDIT_SECRET)
+  return createHmac('sha256', getServerConfig().ptwAuditSecret)
     .update(
       permit.id + '|' + permit.permitNumber + '|Rev' + String(permit.revisionNo) +
       '|' + action + '|' + actor.id + '|' + decidedAt
