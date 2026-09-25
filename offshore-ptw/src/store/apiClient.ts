@@ -81,6 +81,17 @@ async function request<T>(method: 'GET' | 'POST', body?: Record<string, unknown>
 
 export async function getState(): Promise<RemoteState> {
   const result = await request<{ state: RemoteState }>('GET');
+  if (
+    !isPayload(result) ||
+    !isPayload(result.state) ||
+    !Array.isArray(result.state.permits) ||
+    !Array.isArray(result.state.users) ||
+    !isPayload(result.state.approverCertifications) ||
+    !('currentUser' in result.state) ||
+    !Array.isArray(result.state.notifications)
+  ) {
+    throw invalidResponseError(200);
+  }
   return result.state;
 }
 

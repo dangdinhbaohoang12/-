@@ -123,6 +123,9 @@ function getServerConfig(): ServerConfig {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     configurationError('SUPABASE_URL phải là URL HTTP hoặc HTTPS hợp lệ.');
   }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    configurationError('SUPABASE_URL không được chứa username, password, query hoặc fragment.');
+  }
 
   return {
     supabaseUrl: supabaseUrl.replace(/\/+$/, ''),
@@ -288,9 +291,18 @@ async function supabase(path: string, init: RequestInit = {}): Promise<any> {
   headers.set('Content-Type', 'application/json');
   if (!headers.has('Prefer')) headers.set('Prefer', 'return=representation');
 
+  const separator = path.indexOf('?');
+  const resourcePath = separator >= 0 ? path.slice(0, separator) : path;
+  const resourceQuery = separator >= 0 ? path.slice(separator + 1) : '';
+  const endpoint = new URL(
+    '/rest/v1/' + resourcePath.replace(/^\/+/, ''),
+    supabaseUrl + '/'
+  );
+  endpoint.search = resourceQuery;
+
   let response: Response;
   try {
-    response = await fetch(supabaseUrl + '/rest/v1/' + path, {
+    response = await fetch(endpoint, {
       ...init,
       headers,
     });

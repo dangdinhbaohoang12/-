@@ -13,6 +13,15 @@ describe('PTW API responses', () => {
     await expect(getState()).resolves.toEqual(state);
   });
 
+  it('rejects a successful GET response without a valid state envelope', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ok: true }, { status: 200 })));
+
+    await expect(getState()).rejects.toMatchObject({
+      message: 'Máy chủ PTW trả về phản hồi không hợp lệ (HTTP 200).',
+      status: 200,
+    });
+  });
+
   it.each(['', '<html>unavailable</html>', 'null'])(
     'rejects an invalid successful response body (%s) with its HTTP status',
     async (body) => {

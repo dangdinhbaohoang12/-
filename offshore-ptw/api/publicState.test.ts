@@ -85,6 +85,20 @@ describe('public state user data', () => {
     });
   });
 
+  it.each([
+    'https://supabase.example.test?mode=test',
+    'https://supabase.example.test#fragment',
+  ])('returns a 503 configuration error for SUPABASE_URL with query/fragment: %s', async (url) => {
+    vi.stubEnv('SUPABASE_URL', url);
+    try {
+      const response = await post({ operation: 'LOGIN', username: 'applicant', pin: '1234' });
+      expect(response.status).toBe(503);
+      expect(response.body).toEqual({ ok: false, error: 'Backend chưa được cấu hình đầy đủ trên Vercel.' });
+    } finally {
+      vi.stubEnv('SUPABASE_URL', 'https://supabase.example.test');
+    }
+  });
+
   it.each(['not a URL', 'ftp://supabase.example.test'])('returns a 503 configuration error for invalid SUPABASE_URL: %s', async (url) => {
     vi.stubEnv('SUPABASE_URL', url);
     try {
