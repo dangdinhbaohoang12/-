@@ -22,6 +22,19 @@ describe('PTW API responses', () => {
     });
   });
 
+
+  it('rejects a GET state with an invalid currentUser value', async () => {
+    const state = {
+      permits: [], users: [], approverCertifications: {}, currentUser: 42, notifications: [],
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ok: true, state })));
+
+    await expect(getState()).rejects.toMatchObject({
+      message: 'Máy chủ PTW trả về phản hồi không hợp lệ (HTTP 200).',
+      status: 200,
+    });
+  });
+
   it.each(['', '<html>unavailable</html>', 'null'])(
     'rejects an invalid successful response body (%s) with its HTTP status',
     async (body) => {

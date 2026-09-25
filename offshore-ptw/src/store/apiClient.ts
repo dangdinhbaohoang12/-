@@ -31,6 +31,39 @@ function isPayload(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+const ROLE_VALUES: Role[] = [
+  'OIM',
+  'DEPUTY_OIM',
+  'FPS',
+  'LINE_SUPERVISOR',
+  'PERMIT_APPLICANT',
+  'PERMIT_CONTROLLER',
+  'HSE',
+  'ADMINISTRATOR',
+];
+
+function isUserAccount(value: unknown): value is UserAccount {
+  if (!isPayload(value)) return false;
+  return (
+    typeof value.id === 'string' &&
+    typeof value.username === 'string' &&
+    typeof value.fullName === 'string' &&
+    typeof value.role === 'string' &&
+    ROLE_VALUES.includes(value.role as Role) &&
+    typeof value.platformCode === 'string' &&
+    typeof value.pinHash === 'string' &&
+    typeof value.active === 'boolean' &&
+    typeof value.mustChangePin === 'boolean' &&
+    typeof value.createdAt === 'string' &&
+    typeof value.createdByUserId === 'string' &&
+    (value.organization === undefined || typeof value.organization === 'string') &&
+    (value.certificationNumber === undefined || typeof value.certificationNumber === 'string') &&
+    (value.email === undefined || typeof value.email === 'string') &&
+    (value.phone === undefined || typeof value.phone === 'string') &&
+    (value.lastLoginAt === undefined || typeof value.lastLoginAt === 'string')
+  );
+}
+
 async function request<T>(method: 'GET' | 'POST', body?: Record<string, unknown>): Promise<T> {
   let response: Response;
   try {
@@ -88,7 +121,8 @@ export async function getState(): Promise<RemoteState> {
     !Array.isArray(result.state.users) ||
     !isPayload(result.state.approverCertifications) ||
     !('currentUser' in result.state) ||
-    !Array.isArray(result.state.notifications)
+    !Array.isArray(result.state.notifications) ||
+    !(result.state.currentUser === null || isUserAccount(result.state.currentUser))
   ) {
     throw invalidResponseError(200);
   }

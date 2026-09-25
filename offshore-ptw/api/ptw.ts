@@ -1,8 +1,3 @@
-export const config = {
-  runtime: 'nodejs',
-  maxDuration: 15,
-};
-
 import {
   createHmac,
   randomBytes,
@@ -1770,18 +1765,7 @@ async function handlePost(req: AnyRequest, res: AnyResponse): Promise<void> {
   }
 }
 
-function isWebRequest(value: AnyRequest): boolean {
-  return Boolean(
-    value &&
-    typeof value === 'object' &&
-    value.headers &&
-    typeof value.headers.get === 'function'
-  );
-}
-
-async function adaptWebRequest(request: AnyRequest): Promise<AnyRequest> {
-  if (!isWebRequest(request)) return request;
-
+async function adaptWebRequest(request: Request): Promise<AnyRequest> {
   const headers: Record<string, string> = {};
   request.headers.forEach((value: string, key: string) => {
     headers[key.toLowerCase()] = value;
@@ -1858,20 +1842,15 @@ async function handleHttp(req: AnyRequest, res: AnyResponse): Promise<void> {
 }
 
 /**
- * Supports both the legacy VercelRequest/VercelResponse signature and the
- * current Web Request/Response adapter used by Vercel's Node.js runtime.
+ * Vercel's current Node.js Functions contract uses a Web Standard Request and
+ * Response handler. Keep the adapter explicit so the existing business/auth
+ * implementation remains unchanged.
  */
-export default async function handler(
-  req: AnyRequest,
-  res?: AnyResponse,
-): Promise<void | Response> {
-  if (res && typeof res.setHeader === 'function') {
-    await handleHttp(req, res);
-    return;
-  }
-
-  const adaptedRequest = await adaptWebRequest(req);
-  const web = createWebResponse();
-  await handleHttp(adaptedRequest, web.response);
-  return web.toResponse();
-}
+export default {
+  async fetch(request: Request): Promise<Response> {
+    const adaptedRequest = await adaptWebRequest(request);
+    const web = createWebResponse();
+    await handleHttp(adaptedRequest, web.response);
+    return web.toResponse();
+  },
+};
