@@ -1,8 +1,3 @@
-export const config = {
-  runtime: 'nodejs',
-  maxDuration: 15,
-};
-
 import {
   createHmac,
   randomBytes,
@@ -663,11 +658,35 @@ async function authenticateLogin(usernameInput: string, pin: string): Promise<an
   }) ?? user;
 }
 
-async function parseBody(req: AnyRequest): Promise<any> {
-  if (req.body && typeof req.body === 'object') return req.body;
-  if (typeof req.body === 'string') {
-    try { return JSON.parse(req.body); } catch { return {}; }
+async function parseBody(req: AnyRequest): Promise<Record<string, unknown>> {
+  if (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) {
+    return req.body as Record<string, unknown>;
   }
+
+  if (typeof req.body === 'string') {
+    try {
+      const parsed = JSON.parse(req.body);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : {};
+    } catch {
+      return {};
+    }
+  }
+
+  if (typeof req.json === 'function') {
+    try {
+      const parsed = await req.json();
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : {};
+    } catch {
+      return {};
+    }
+  }
+
+  if (typeof req.on !== 'function') return {};
+
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     req.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -675,7 +694,16 @@ async function parseBody(req: AnyRequest): Promise<any> {
       const raw = Buffer.concat(chunks).toString('utf8');
       if (!raw) resolve({});
       else {
-        try { resolve(JSON.parse(raw)); } catch { resolve({}); }
+        try {
+          const parsed = JSON.parse(raw);
+          resolve(
+            parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+              ? parsed as Record<string, unknown>
+              : {}
+          );
+        } catch {
+          resolve({});
+        }
       }
     });
   });
@@ -1770,108 +1798,26 @@ async function handlePost(req: AnyRequest, res: AnyResponse): Promise<void> {
   }
 }
 
-function isWebRequest(value: AnyRequest): boolean {
-  return Boolean(
-    value &&
-    typeof value === 'object' &&
-    value.headers &&
-    typeof value.headers.get === 'function'
-  );
-}
-
-async function adaptWebRequest(request: AnyRequest): Promise<AnyRequest> {
-  if (!isWebRequest(request)) return request;
-
-  const headers: Record<string, string> = {};
-  request.headers.forEach((value: string, key: string) => {
-    headers[key.toLowerCase()] = value;
-  });
-
-  let body: unknown = undefined;
-  if (request.method === 'POST') {
-    try {
-      body = await request.json();
-    } catch {
-      body = {};
-    }
-  }
-
-  return {
-    method: request.method,
-    headers,
-    body,
-  };
-}
-
-function createWebResponse(): {
-  response: AnyResponse;
-  toResponse: () => Response;
-} {
-  let statusCode = 200;
-  let responseBody: string | undefined;
-  const headers = new Headers();
-
-  const response: AnyResponse = {
-    get statusCode() {
-      return statusCode;
-    },
-    set statusCode(value: number) {
-      statusCode = value;
-    },
-    setHeader(name: string, value: string | string[]): void {
-      headers.set(name, Array.isArray(value) ? value.join(', ') : value);
-    },
-    end(body?: string): void {
-      responseBody = body;
-    },
-  };
-
-  return {
-    response,
-    toResponse: () => new Response(responseBody, { status: statusCode, headers }),
-  };
-}
-
-async function handleHttp(req: AnyRequest, res: AnyResponse): Promise<void> {
-  try {
-    res.setHeader('Cache-Control', 'no-store');
-    if (req.method === 'GET' || req.method === 'POST') {
-      getServerConfig();
-    }
-    if (req.method === 'GET') {
-      await handleGet(req, res);
-      return;
-    }
-    if (req.method === 'POST') {
-      await handlePost(req, res);
-      return;
-    }
-    if (req.method === 'OPTIONS') {
-      res.statusCode = 204;
-      res.end();
-      return;
-    }
-    sendJson(res, 405, { ok: false, error: 'Method không được hỗ trợ.' });
-  } catch (error) {
-    sendError(res, error);
-  }
-}
-
-/**
- * Supports both the legacy VercelRequest/VercelResponse signature and the
- * current Web Request/Response adapter used by Vercel's Node.js runtime.
- */
 export default async function handler(
   req: AnyRequest,
-  res?: AnyResponse,
-): Promise<void | Response> {
-  if (res && typeof res.setHeader === 'function') {
+  res: AnyResponse,
+): Promise<void> {
+  try {
     await handleHttp(req, res);
-    return;
+  } catch (error) {
+    // handleHttp normally catches all request-path errors. Keep this final
+    // guard so an unexpected handler error still becomes JSON rather than
+    // Vercel's generic HTML 500 response.
+    try {
+      sendError(res, error);
+    } catch {
+      res.statusCode = 500;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.end(JSON.stringify({
+        ok: false,
+        error: 'Lỗi máy chủ – kiểm tra cấu hình backend/database.',
+      }));
+    }
   }
-
-  const adaptedRequest = await adaptWebRequest(req);
-  const web = createWebResponse();
-  await handleHttp(adaptedRequest, web.response);
-  return web.toResponse();
+}
 }
