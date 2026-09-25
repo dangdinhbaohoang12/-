@@ -20,7 +20,6 @@ jobs:
       - name: Enable Auto-Merge via GitHub Script
         uses: actions/github-script@v9
         with:
-          github-token: \${{ secrets.GITHUB_TOKEN }}
           script: |
             const prNumber = context.payload.pull_request.number;
             
