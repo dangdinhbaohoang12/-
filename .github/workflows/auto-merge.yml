@@ -302,9 +302,8 @@ jobs:
               return response.data;
             }
 
-            async function waitForAllCIToSettle(headSha) {
+            async function waitForAllCIToSettle(headSha, prNumber) {
               const deadline = Date.now() + maxCiWaitSeconds * 1000;
-              let sawCi = false;
 
               while (Date.now() < deadline) {
                 const [workflowRuns, checkRuns, combinedStatus] = await Promise.all([
@@ -324,9 +323,11 @@ jobs:
                   run.name === 'Typecheck / Test / Build'
                 );
 
-                if (requiredWorkflowRuns.length > 0 || requiredCheckRuns.length > 0) {
-                  sawCi = true;
-                }
+               const sawCi = requiredWorkflowRuns.some(run =>
+                  run.event === 'pull_request' &&
+                  run.pull_requests?.some(pr => pr.number === prNumber) &&
+                  run.status === 'completed'
+                );
 
                 const pendingWorkflows = requiredWorkflowRuns.filter(run => run.status !== 'completed');
                 const pendingChecks = requiredCheckRuns.filter(run => run.status !== 'completed');
@@ -561,7 +562,7 @@ jobs:
             }
 
             // Wait until all Actions workflows/checks associated with this exact head SHA are finished.
-            const ci = await waitForAllCIToSettle(currentHeadSha);
+            const ci = await waitForAllCIToSettle(currentHeadSha, prNumber);
             const workflowRuns = ci.workflowRuns;
             const checkRuns = ci.checkRuns;
             const combinedStatus = ci.combinedStatus;
