@@ -12,7 +12,7 @@ The migrations create server-owned tables for users, permits, notifications and 
 
 Configure the variables from .env.example in the Vercel/server environment. Never prefix secrets with VITE_, never commit real values, and never expose the service-role key, session secret or audit secret to the browser.
 
-The bootstrap OIM is created only when the database has no users. Its PIN comes from BOOTSTRAP_OIM_PIN, is hashed with server-side scrypt, and is never returned to the frontend. Change that PIN on first login.
+The predefined system accounts in `src/data/catalog.ts` are the initial account source. When `ptw_users` is missing one of those accounts, the trusted backend creates it from `SYSTEM_ACCOUNTS`; its legacy catalog PIN hash is accepted for migration and upgraded to server-side `scrypt$v1` after successful authentication. No `BOOTSTRAP_OIM_*` environment variables are required.
 
 ## Runtime model
 
@@ -40,12 +40,12 @@ Before switching production traffic to this frontend/backend:
 
 1. **Export** existing browser-persisted users, permits, and notifications to JSON from the old client, for every platform/session that has live data. Keep notification IDs, recipient and permit IDs, timestamps, and read/unread state.
 2. **Transform**: for users, PINs must be re-hashed server-side (`hashPinServer`, scrypt) since old client-side PIN storage/hashing is not compatible with `ptw_users.pin_hash`'s format – this typically means resetting every migrated user's PIN and forcing `must_change_pin = true`, unless the export can be authenticated against the old hash and re-hashed with the new PIN at export time. For permits, map each exported permit's shape onto the `Permit` type (see `src/types/domain.ts`) and insert as `ptw_permits.data` with a fresh `version`. For each notification, map the `AppNotification` fields (same file) into `ptw_notifications`: `id`, `recipient_user_id`, `permit_id`, `permit_number`, `event`, `message`, `severity`, `created_at`, `read_at`, and the complete notification as `data`. Preserve `readAt` in both `read_at` and `data` for read alerts; keep `read_at` null and omit `readAt` from `data` for unread alerts. Resolve any changed user/permit IDs in both the columns and `data`, and reconcile missing references before import because both IDs have foreign keys.
-3. **Import**: write users first, permits second, then notifications into `ptw_users`, `ptw_permits`, and `ptw_notifications` (e.g. via a one-off script using the service-role key). Complete this before the bootstrap-OIM path in `api/ptw.ts` (`ensureBootstrapUser`) ever runs — that path only fires when `ptw_users` is empty, so importing first avoids creating an unwanted bootstrap account.
+3. **Import**: write users first, permits second, then notifications into `ptw_users`, `ptw_permits`, and `ptw_notifications` (e.g. via a one-off script using the service-role key). Predefined accounts do not require a separate bootstrap import: the backend reconciles missing `SYSTEM_ACCOUNTS` entries from `src/data/catalog.ts` when a login is attempted. Existing database rows are preserved; only missing catalog usernames are inserted.
 4. **Validate**: compare exported and imported counts and IDs for users, permits, and notifications; check permit numbers and unread counts per recipient. Perform at least one authenticated login per migrated platform and confirm its notifications, including unread alerts, appear in the new client before removing read access to the old browser-persisted store. The API returns the newest 300 notifications per user; if a user has unread alerts outside that window, increase the API retrieval limit before cutover and repeat validation.
 
 **Until this export/import/validation step has been completed and verified, do not deploy this frontend to production for any platform that has existing browser-persisted users, permits, or notifications.** Deploying against an empty database in that situation hides those users' accounts, permit history, and unread alerts from the new client (the old data still exists in their browser, but the new authoritative backend has no record of it and a fresh bootstrap OIM will be created instead).
 
-New deployments with no prior browser-persisted data (fresh installs) do not need this step and can proceed directly to the deployment checklist below.
+New deployments with no prior browser-persisted data (fresh installs) can proceed directly to the deployment checklist below; the first login automatically seeds the predefined `SYSTEM_ACCOUNTS` from `src/data/catalog.ts`.
 
 ## Deployment
 
