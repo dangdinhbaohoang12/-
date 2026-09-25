@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { postMock } = vi.hoisted(() => ({ postMock: vi.fn() }));
-vi.mock('./apiClient', () => ({ post: postMock, getState: vi.fn(), toActionKind: vi.fn() }));
+const { getStateMock, postMock } = vi.hoisted(() => ({ getStateMock: vi.fn(), postMock: vi.fn() }));
+vi.mock('./apiClient', () => ({ post: postMock, getState: getStateMock, toActionKind: vi.fn() }));
 
 import { usePtwStore } from './ptwStore';
 
 beforeEach(() => {
   postMock.mockReset();
+  getStateMock.mockReset();
 });
 
 describe('login after logout', () => {
@@ -67,19 +68,50 @@ describe('state response ordering', () => {
     expect(usePtwStore.getState().permits[0]?.id).toBe('newer');
   });
 
-  it('keeps logout clear when a pending response arrives afterward', async () => {
+  it('waits for a pending login before logout clears the cookie and hydration', async () => {
     let resolveLogin!: (value: unknown) => void;
-    const loginRequest = new Promise((resolve) => { resolveLogin = resolve; });
-    postMock.mockImplementation((operation: string) =>
-      operation === 'LOGIN' ? loginRequest : Promise.resolve({ ok: true })
+    let sessionCookie: 'authenticated' | null = null;
+    let logoutSettled = false;
+    const loginState = { permits: [{ id: 'stale' }], users: [],
+      approverCertifications: {}, currentUser: { id: 'operator' }, notifications: [] };
+    const anonymousState = { permits: [], users: [], approverCertifications: {},
+      currentUser: null, notifications: [] };
+    const loginRequest = new Promise((resolve) => {
+      resolveLogin = (value) => {
+        sessionCookie = 'authenticated';
+        resolve(value);
+      };
+    });
+    postMock.mockImplementation((operation: string) => {
+      if (operation === 'LOGIN') return loginRequest;
+      if (operation === 'LOGOUT') {
+        return loginRequest.then(() => {
+          sessionCookie = null;
+          return { ok: true };
+        });
+      }
+      return Promise.resolve({ ok: true });
+    });
+    getStateMock.mockImplementation(() =>
+      Promise.resolve(sessionCookie === 'authenticated' ? loginState : anonymousState)
     );
 
     const login = usePtwStore.getState().login('operator', '1234');
-    await usePtwStore.getState().logout();
-    resolveLogin({ mustChangePin: false, state: { permits: [{ id: 'stale' }], users: [],
-      approverCertifications: {}, currentUser: { id: 'operator' }, notifications: [] } });
+    const logout = usePtwStore.getState().logout();
+    void logout.then(() => { logoutSettled = true; });
+    expect(postMock.mock.calls.map(([operation]) => operation)).toEqual(['LOGIN', 'LOGOUT']);
+
+    await Promise.resolve();
+    expect(logoutSettled).toBe(false);
+    resolveLogin({ mustChangePin: false, state: loginState });
     await login;
+    await logout;
+
+    expect(sessionCookie).toBeNull();
+    await usePtwStore.getState().hydrate();
+    expect(getStateMock).toHaveBeenCalledTimes(1);
     expect(usePtwStore.getState().currentUser).toBeNull();
     expect(usePtwStore.getState().permits).toEqual([]);
+    expect(usePtwStore.getState().authReady).toBe(true);
   });
 });
