@@ -13,15 +13,15 @@ declare
   new_count integer;
   new_locked timestamptz;
 begin
-  update public.ptw_users
-  set failed_login_count = failed_login_count + 1,
+  update public.ptw_users as target
+  set failed_login_count = target.failed_login_count + 1,
       locked_until = case
-        when failed_login_count + 1 >= p_max_failures
+        when target.failed_login_count + 1 >= p_max_failures
           then now() + (p_lock_ms || ' milliseconds')::interval
-        else locked_until
+        else target.locked_until
       end
-  where id = p_user_id
-  returning public.ptw_users.failed_login_count, public.ptw_users.locked_until
+  where target.id = p_user_id
+  returning target.failed_login_count, target.locked_until
   into new_count, new_locked;
 
   return query select new_count, new_locked;

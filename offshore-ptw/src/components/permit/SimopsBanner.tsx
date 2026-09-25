@@ -27,6 +27,11 @@ export function SimopsBanner({ permit, conflicts }: { permit: Permit; conflicts:
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
+  const targetConflictIdRef = useRef<string | null>(null);
+  const selectTarget = (next: SimopsConflict | null) => {
+    targetConflictIdRef.current = next?.conflictId ?? null;
+    setTarget(next);
+  };
 
   if (conflicts.length === 0) {
     return (
@@ -49,9 +54,9 @@ export function SimopsBanner({ permit, conflicts }: { permit: Permit; conflicts:
       // The modal may have been closed/reopened for a different conflict
       // while this request was in flight; only apply the result if it's
       // still the one we started for.
-      if (target?.conflictId !== conflictId) return;
+      if (targetConflictIdRef.current !== conflictId) return;
       if (!res.ok) { setError(res.error ?? 'Không ghi nhận được.'); return; }
-      setTarget(null); setNote(''); setPin('');
+      selectTarget(null); setNote(''); setPin('');
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
@@ -77,7 +82,7 @@ export function SimopsBanner({ permit, conflicts }: { permit: Permit; conflicts:
               {acked ? (
                 <Badge tone="success">Đã đánh giá & ghi nhận ✔</Badge>
               ) : (
-                <Button size="sm" variant={c.level === 'BLOCK' ? 'danger' : 'outline'} disabled={!canAck} onClick={() => setTarget(c)}>
+                <Button size="sm" variant={c.level === 'BLOCK' ? 'danger' : 'outline'} disabled={!canAck} onClick={() => selectTarget(c)}>
                   {canAck ? 'Ký ghi nhận quyết định' : 'Chờ FPS/OIM đánh giá'}
                 </Button>
               )}
@@ -86,7 +91,7 @@ export function SimopsBanner({ permit, conflicts }: { permit: Permit; conflicts:
         );
       })}
 
-      <Modal open={!!target} onClose={() => setTarget(null)} title="Ghi nhận đánh giá xung đột SIMOPS" subtitle={target?.reason}>
+      <Modal open={!!target} onClose={() => selectTarget(null)} title="Ghi nhận đánh giá xung đột SIMOPS" subtitle={target?.reason}>
         <div className="space-y-4">
           <FieldRow label="Kết luận của người có thẩm quyền (bắt buộc)">
             <textarea className={inputClass} rows={3} placeholder="VD: Bố trí barrier cứng, giãn khung thời gian, cử standby man – cho phép triển khai với biện pháp bổ sung." value={note} onChange={(e) => setNote(e.target.value)} />
@@ -94,7 +99,7 @@ export function SimopsBanner({ permit, conflicts }: { permit: Permit; conflicts:
           <FieldRow label="PIN điện tử xác nhận"><input type="password" maxLength={8} className={inputClass} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} /></FieldRow>
           {error && <p className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">⛔ {error}</p>}
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setTarget(null)} disabled={submitting}>Hủy</Button>
+            <Button variant="ghost" onClick={() => selectTarget(null)} disabled={submitting}>Hủy</Button>
             <Button variant="danger" onClick={submitAck} disabled={!note.trim() || submitting}>{submitting ? 'Đang gửi…' : 'Ký & ghi nhận'}</Button>
           </div>
         </div>

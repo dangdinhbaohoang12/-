@@ -7,7 +7,9 @@ import {
 
 import { buildApprovalChain } from '../src/engine/approvalRuleEngine';
 import {
+  GAS_SPECS,
   computeOverallResult,
+  evaluateReading,
   hasAllRequiredParameters,
   isDetectorCalibrationValid,
 } from '../src/engine/gasTestEngine';
@@ -35,6 +37,7 @@ import {
 import { TERMINAL_STATUSES } from '../src/types/domain';
 import type {
   AppNotification,
+  GasParameter,
   GasTestRecord,
   Permit,
   PermitStatus,
@@ -96,6 +99,8 @@ function normalizeUsername(username: string): string {
 function validPin(pin: string): boolean {
   return /^\d{4,8}$/.test(pin);
 }
+
+const KNOWN_SAMPLE_BOOTSTRAP_PINS = new Set(['13579246', '1234', '123456', '12345678']);
 
 /**
  * scrypt cost for hashing PINs. The key space of a 4–8 digit PIN is only
@@ -415,7 +420,7 @@ async function ensureBootstrapUser(): Promise<void> {
   const pin = process.env.BOOTSTRAP_OIM_PIN ?? '';
   const fullName = process.env.BOOTSTRAP_OIM_FULL_NAME ?? '';
   const platformCode = process.env.BOOTSTRAP_OIM_PLATFORM_CODE ?? '';
-  if (!username || !validPin(pin) || !fullName || !platformCode) {
+  if (!username || !validPin(pin) || KNOWN_SAMPLE_BOOTSTRAP_PINS.has(pin) || !fullName || !platformCode) {
     throw new Error('No users exist. Configure the bootstrap OIM environment variables on the server.');
   }
 
@@ -1152,7 +1157,11 @@ async function addGasTest(user: any, body: any, req: AnyRequest): Promise<void> 
   if (!input.gasDetectorId || !input.calibrationDueDate || !input.location) {
     badRequest('Bắt buộc: Mã máy dò, Hạn hiệu chuẩn, Vị trí đo.');
   }
-  if (!hasAllRequiredParameters(input.readings ?? [])) {
+  const rawReadings: any[] = Array.isArray(input.readings) ? input.readings : [];
+  if (rawReadings.some((reading: any) => !reading || !Object.hasOwn(GAS_SPECS, reading.parameter))) {
+    badRequest('Thông số khí không hợp lệ.');
+  }
+  if (!hasAllRequiredParameters(rawReadings)) {
     badRequest('Phải đo đủ 4 thông số O₂ / LEL / H₂S / CO.');
   }
   const testedAt = nowIso();
@@ -1161,15 +1170,24 @@ async function addGasTest(user: any, body: any, req: AnyRequest): Promise<void> 
     badRequest('Máy dò đã hết hạn hiệu chuẩn – phép đo không có giá trị pháp lý.');
   }
 
-  const rawReadings: any[] = Array.isArray(input.readings) ? input.readings : [];
-  const readings = rawReadings.map((reading: any) => ({
-    parameter: reading.parameter,
-    value: Number(reading.value),
-    unit: reading.unit,
-    min: reading.min,
-    max: reading.max,
-    result: reading.result,
-  })) as GasTestRecord['readings'];
+  const readings: GasTestRecord['readings'] = rawReadings.map((reading: any) => {
+    const parameter = reading.parameter as GasParameter;
+    const spec = GAS_SPECS[parameter];
+    const rawValue = reading?.value;
+    const value = Number(rawValue);
+    if ((typeof rawValue !== 'number' && typeof rawValue !== 'string') ||
+        (typeof rawValue === 'string' && !rawValue.trim()) || !Number.isFinite(value)) {
+      badRequest('Giá trị đo khí không hợp lệ.');
+    }
+    return {
+      parameter,
+      value,
+      unit: spec.unit,
+      min: spec.min,
+      max: spec.max,
+      result: evaluateReading(parameter, value),
+    };
+  });
 
   const overall = computeOverallResult({
     readings,
@@ -1413,7 +1431,7 @@ async function changeOwnPin(user: any, body: any, res: AnyResponse): Promise<any
   return updated ?? user;
 }
 
-async function createUserAccount(user: any, body: any): Promise<void> {
+async function createUserAccount(user: any, body: any, req: AnyRequest): Promise<void> {
   operationalUser(user);
   ensurePermission(user.role as Role, 'MANAGE_USERS');
   await ensurePin(user, String(body.operatorPin ?? ''));
@@ -1448,12 +1466,12 @@ async function createUserAccount(user: any, body: any): Promise<void> {
       locked_until: null,
       session_version: 1,
     },
-    accountAudit(user, 'Tạo tài khoản người dùng ' + username, 'SERVER', { targetUserId: newUserId, targetRole: input.role }),
+    accountAudit(user, 'Tạo tài khoản người dùng ' + username, deviceIpFor(req), { targetUserId: newUserId, targetRole: input.role }),
   );
   void created;
 }
 
-async function changeUserPin(user: any, body: any): Promise<void> {
+async function changeUserPin(user: any, body: any, req: AnyRequest): Promise<void> {
   operationalUser(user);
   ensurePermission(user.role as Role, 'MANAGE_USERS');
   await ensurePin(user, String(body.operatorPin ?? ''));
@@ -1474,7 +1492,7 @@ async function changeUserPin(user: any, body: any): Promise<void> {
       locked_until: '',
       session_version: Number(target.session_version) + 1,
     },
-    accountAudit(user, 'Cấp lại PIN tài khoản ' + target.username, 'SERVER', { targetUserId: target.id }),
+    accountAudit(user, 'Cấp lại PIN tài khoản ' + target.username, deviceIpFor(req), { targetUserId: target.id }),
   );
 }
 
@@ -1590,11 +1608,11 @@ async function handlePost(req: AnyRequest, res: AnyResponse): Promise<void> {
       return;
     }
     case 'CREATE_USER':
-      await createUserAccount(user, body);
+      await createUserAccount(user, body, req);
       sendJson(res, 200, { ok: true, state: await publicState(user) });
       return;
     case 'CHANGE_USER_PIN':
-      await changeUserPin(user, body);
+      await changeUserPin(user, body, req);
       sendJson(res, 200, { ok: true, state: await publicState(user) });
       return;
     case 'TOGGLE_USER_ACTIVE':
