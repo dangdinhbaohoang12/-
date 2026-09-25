@@ -697,7 +697,7 @@ function sendError(res: AnyResponse, error: unknown): void {
   const code = String((error as any)?.code ?? '');
   const message =
     code === 'PTW_CONFIG_ERROR'
-      ? 'Backend chưa được cấu hình đầy đủ trên Vercel.'
+      ? String((error as any)?.detail || 'Backend chưa được cấu hình đầy đủ trên Vercel.')
       : code === 'PTW_UPSTREAM_ERROR'
         ? 'Máy chủ PTW không thể kết nối tới backend/database. Kiểm tra Supabase và biến môi trường Vercel.'
         : status === 500
