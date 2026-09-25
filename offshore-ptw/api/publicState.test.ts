@@ -93,7 +93,7 @@ describe('public state user data', () => {
     try {
       const response = await post({ operation: 'LOGIN', username: 'applicant', pin: '1234' });
       expect(response.status).toBe(503);
-      expect(response.body).toEqual({ ok: false, error: 'Backend chưa được cấu hình đầy đủ trên Vercel.' });
+      expect(response.body).toEqual({ ok: false, error: 'SUPABASE_URL không được chứa username, password, query hoặc fragment.' });
     } finally {
       vi.stubEnv('SUPABASE_URL', 'https://supabase.example.test');
     }
@@ -105,7 +105,7 @@ describe('public state user data', () => {
       const response = await post({ operation: 'LOGIN', username: 'applicant', pin: '1234' });
 
       expect(response.status).toBe(503);
-      expect(response.body).toEqual({ ok: false, error: 'Backend chưa được cấu hình đầy đủ trên Vercel.' });
+      expect(response.body).toEqual({ ok: false, error: 'SUPABASE_URL phải là URL HTTP hoặc HTTPS hợp lệ.' });
     } finally {
       vi.stubEnv('SUPABASE_URL', 'https://supabase.example.test');
     }
