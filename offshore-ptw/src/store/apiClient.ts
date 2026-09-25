@@ -64,7 +64,7 @@ async function request<T>(method: 'GET' | 'POST', body?: Record<string, unknown>
 
   if (!response.ok || (isPayload(payload) && payload.ok === false)) {
     const fallback =
-      response.status >= 500
+      response.status >= 500 || response.status === 404
         ? 'Máy chủ PTW không phản hồi đúng định dạng. Kiểm tra API /api/ptw và biến môi trường Vercel.'
         : 'Yêu cầu máy chủ thất bại.';
     const error = new Error(isPayload(payload) && typeof payload.error === 'string' ? payload.error : fallback);

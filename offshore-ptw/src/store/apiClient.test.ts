@@ -25,6 +25,18 @@ describe('PTW API responses', () => {
     },
   );
 
+  it.each([404, 500])(
+    'surfaces the deployment fallback message for a non-JSON %s response',
+    async (status) => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('<html>unavailable</html>', { status })));
+
+      await expect(getState()).rejects.toMatchObject({
+        message: expect.stringContaining('Kiểm tra API /api/ptw và biến môi trường Vercel.'),
+        status,
+      });
+    },
+  );
+
   it('maps response body read failures to the connection error', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
