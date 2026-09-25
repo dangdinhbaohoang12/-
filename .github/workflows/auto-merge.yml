@@ -1,7 +1,8 @@
 name: PR Final Gate - Auto Merge
 
-# This workflow is intentionally standalone. It never checks out or executes PR code.
-# It only reads GitHub metadata/logs and performs PR/label/review/auto-merge operations.
+# This workflow is intentionally standalone.
+# It never checks out or executes PR code.
+# It only reads GitHub metadata/checks/reviews and performs PR/label/auto-merge operations.
 
 on:
   pull_request_target:
@@ -12,21 +13,25 @@ on:
       - ready_for_review
       - labeled
       - unlabeled
+
   pull_request_review:
     types:
       - submitted
       - edited
       - dismissed
+
   pull_request_review_comment:
     types:
       - created
       - edited
       - deleted
+
   issue_comment:
     types:
       - created
       - edited
       - deleted
+
   workflow_dispatch:
     inputs:
       pr_number:
@@ -38,7 +43,7 @@ permissions:
   actions: read
   checks: read
   contents: write
-  issues: write
+  issues: read
   pull-requests: write
 
 concurrency:
@@ -50,661 +55,698 @@ jobs:
     name: Final PR gate
     runs-on: ubuntu-latest
     timeout-minutes: 20
+
     steps:
-      - name: Evaluate CI, reviews, label, and auto-merge
-        uses: actions/github-script@v9
+      - name: Evaluate CI, reviews, label, conflicts, and auto-merge
+        uses: actions/github-script@v8
         env:
           READY_LABEL: "sẵn sàng hợp nhất"
           MERGE_METHOD: "SQUASH"
           MAX_CI_WAIT_SECONDS: "900"
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          POLL_INTERVAL_SECONDS: "20"
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
+
           script: |
             const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
             const owner = context.repo.owner;
             const repo = context.repo.repo;
+
             const readyLabel = process.env.READY_LABEL;
-            const mergeMethod = process.env.MERGE_METHOD || 'SQUASH';
-            const maxCiWaitSeconds = Number(process.env.MAX_CI_WAIT_SECONDS || '900');
-            const allowedSuccessfulConclusions = new Set(['success', 'neutral', 'skipped']);
+            const mergeMethod = process.env.MERGE_METHOD || "SQUASH";
+            const maxCiWaitSeconds = Number(
+              process.env.MAX_CI_WAIT_SECONDS || "900"
+            );
+            const pollIntervalSeconds = Number(
+              process.env.POLL_INTERVAL_SECONDS || "20"
+            );
+
+            const allowedConclusions = new Set([
+              "SUCCESS",
+              "NEUTRAL",
+              "SKIPPED"
+            ]);
+
             const blockingConclusions = new Set([
-              'failure',
-              'cancelled',
-              'timed_out',
-              'action_required',
-              'stale',
-              'startup_failure'
+              "FAILURE",
+              "CANCELLED",
+              "TIMED_OUT",
+              "ACTION_REQUIRED",
+              "STALE",
+              "STARTUP_FAILURE"
             ]);
 
             function isBotUser(user) {
-              return user?.type === 'Bot' || /\[bot\]$/i.test(user?.login || '');
+              return (
+                user?.type === "Bot" ||
+                /\[bot\]$/i.test(user?.login || "")
+              );
             }
 
-            function isRelevantHuman(user, prAuthorLogin) {
-              return !!user?.login && user.login !== prAuthorLogin && !isBotUser(user);
-            }
-
-            function normalizePath(rawPath) {
-              if (!rawPath) return null;
-              let p = rawPath.trim().replace(/\\/g, '/');
-              p = p.replace(/^https?:\/\/[^/]+\//, '');
-              p = p.replace(/^.*?\/(?:_?work\/[^/]+\/[^/]+\/)/, '');
-              p = p.replace(/^\.\//, '');
-              return p || null;
-            }
-
-            function redactSecrets(text) {
-              return text
-                .replace(/gh[pousr]_[A-Za-z0-9_\-]{20,}/g, '[REDACTED_TOKEN]')
-                .replace(/github_pat_[A-Za-z0-9_\-]{20,}/g, '[REDACTED_TOKEN]')
-                .replace(/xox[baprs]-[A-Za-z0-9-]{20,}/g, '[REDACTED_SECRET]')
-                .replace(/AKIA[0-9A-Z]{16}/g, '[REDACTED_AWS_KEY]');
-            }
-
-            function extractErrorDetails(logText) {
-              const text = redactSecrets(logText || '');
-              const lines = text.split(/\r?\n/);
-              const errorKeywords = /(##\[error\]|\berror\b|\bfailed\b|\bfail(?:ed|ure)?\b|exception|assertionerror|test files|typeerror|syntaxerror)/i;
-              const interesting = [];
-              for (let i = 0; i < lines.length; i++) {
-                if (errorKeywords.test(lines[i])) interesting.push(i);
-              }
-
-              const candidateIndexes = interesting.slice(-12);
-              const snippets = candidateIndexes.map(i => {
-                const start = Math.max(0, i - 2);
-                const end = Math.min(lines.length, i + 3);
-                return lines.slice(start, end).join('\n').trim();
-              }).filter(Boolean);
-
-              const fileHits = [];
-              const patterns = [
-                /(?:^|[\s(])((?:[A-Za-z0-9_.@-]+\/)*[A-Za-z0-9_.@-]+\.(?:ts|tsx|js|jsx|mjs|cjs|java|kt|kts|py|go|rs|cs|cpp|c|h|hpp|swift|rb|php|vue|svelte|css|scss|yml|yaml|json|xml))(?:\(|:)(\d+)(?:(?:,|:)(\d+))?/g,
-                /\b((?:src|test|tests|app|core|lib|packages?)\/[A-Za-z0-9_./@-]+\.[A-Za-z0-9]+)\((\d+),(\d+)\)/g
-              ];
-
-              for (const line of lines) {
-                if (!errorKeywords.test(line)) continue;
-                for (const pattern of patterns) {
-                  pattern.lastIndex = 0;
-                  let match;
-                  while ((match = pattern.exec(line)) !== null) {
-                    const path = normalizePath(match[1]);
-                    const lineNumber = Number(match[2]);
-                    const column = match[3] ? Number(match[3]) : null;
-                    if (path && Number.isInteger(lineNumber)) {
-                      fileHits.push({ path, line: lineNumber, column });
-                    }
-                  }
-                }
-              }
-
-              const uniqueHits = [];
-              const seen = new Set();
-              for (const hit of fileHits) {
-                const key = `${hit.path}:${hit.line}:${hit.column ?? ''}`;
-                if (!seen.has(key)) {
-                  seen.add(key);
-                  uniqueHits.push(hit);
-                }
-                if (uniqueHits.length >= 12) break;
-              }
-
-              return {
-                snippets: [...new Set(snippets)].slice(-8),
-                fileHits: uniqueHits
-              };
-            }
-
-            async function getPullRequestNumber() {
-              if (context.eventName === 'pull_request_target' || context.eventName === 'pull_request_review' || context.eventName === 'pull_request_review_comment') {
+            function getPullRequestNumber() {
+              if (
+                context.eventName === "pull_request_target" ||
+                context.eventName === "pull_request_review" ||
+                context.eventName === "pull_request_review_comment"
+              ) {
                 return context.payload.pull_request?.number || null;
               }
-              if (context.eventName === 'issue_comment') {
-                return context.payload.issue?.pull_request ? context.payload.issue.number : null;
+
+              if (context.eventName === "issue_comment") {
+                return context.payload.issue?.pull_request
+                  ? context.payload.issue.number
+                  : null;
               }
-              if (context.eventName === 'workflow_dispatch') {
-                const n = Number(context.payload.inputs?.pr_number || core.getInput('pr_number'));
-                return Number.isInteger(n) && n > 0 ? n : null;
+
+              if (context.eventName === "workflow_dispatch") {
+                const value =
+                  context.payload.inputs?.pr_number ||
+                  core.getInput("pr_number");
+
+                const number = Number(value);
+
+                return Number.isInteger(number) && number > 0
+                  ? number
+                  : null;
               }
+
               return null;
             }
 
-            async function getReviewThreads(prNumber) {
-              const nodes = [];
-              let after = null;
-              do {
-                const data = await github.graphql(
-                  `query($owner:String!,$repo:String!,$number:Int!,$after:String){
-                    repository(owner:$owner,name:$repo){
-                      pullRequest(number:$number){
-                        reviewThreads(first:100,after:$after){
-                          nodes{
-                            isResolved
-                            comments(first:1){
-                              nodes{
-                                author{login __typename}
-                                body
-                                path
-                                line
-                                url
-                              }
-                            }
+            async function getPullRequest(prNumber) {
+              const data = await github.graphql(
+                `
+                  query(
+                    $owner: String!
+                    $repo: String!
+                    $number: Int!
+                  ) {
+                    repository(owner: $owner, name: $repo) {
+                      pullRequest(number: $number) {
+                        id
+                        number
+                        title
+                        state
+                        draft
+                        mergeable
+                        author {
+                          login
+                        }
+                        headRefOid
+                        labels(first: 100) {
+                          nodes {
+                            name
                           }
-                          pageInfo{hasNextPage endCursor}
+                        }
+                        autoMergeRequest {
+                          enabledAt
+                          mergeMethod
                         }
                       }
                     }
-                  }`,
-                  { owner, repo, number: prNumber, after }
-                );
-                const connection = data.repository.pullRequest.reviewThreads;
-                nodes.push(...(connection.nodes || []));
-                after = connection.pageInfo.hasNextPage ? connection.pageInfo.endCursor : null;
-              } while (after);
-              return nodes;
-            }
-
-            async function getPullRequestGraphQL(prNumber) {
-              return github.graphql(
-                `query($owner:String!,$repo:String!,$number:Int!){
-                  repository(owner:$owner,name:$repo){
-                    pullRequest(number:$number){
-                      id
-                      isDraft
-                      autoMergeRequest{enabledAt mergeMethod}
-                    }
                   }
-                }`,
-                { owner, repo, number: prNumber }
-              );
-            }
-
-            async function disableAutoMerge(prNodeId, enabled) {
-              if (!enabled) return;
-              try {
-                await github.graphql(
-                  `mutation($pullRequestId:ID!){
-                    disablePullRequestAutoMerge(input:{pullRequestId:$pullRequestId}){
-                      pullRequest{id}
-                    }
-                  }`,
-                  { pullRequestId: prNodeId }
-                );
-                core.notice('Auto-merge disabled because the PR is no longer eligible.');
-              } catch (error) {
-                core.warning(`Could not disable auto-merge: ${error.message || error}`);
-              }
-            }
-
-            async function enableAutoMerge(prNodeId, headSha) {
-              await github.graphql(
-                `mutation($pullRequestId:ID!,$expectedHeadOid:GitObjectID!,$mergeMethod:PullRequestMergeMethod!){
-                  enablePullRequestAutoMerge(input:{
-                    pullRequestId:$pullRequestId,
-                    expectedHeadOid:$expectedHeadOid,
-                    mergeMethod:$mergeMethod
-                  }){
-                    pullRequest{
-                      autoMergeRequest{enabledAt mergeMethod}
-                    }
-                  }
-                }`,
+                `,
                 {
-                  pullRequestId: prNodeId,
-                  expectedHeadOid: headSha,
-                  mergeMethod
+                  owner,
+                  repo,
+                  number: prNumber
                 }
               );
-              core.notice(`Auto-merge enabled using ${mergeMethod}.`);
+
+              return data.repository.pullRequest;
             }
 
-            async function addCommentOnce(prNumber, marker, body) {
-              const comments = await github.paginate(github.rest.issues.listComments, {
-                owner,
-                repo,
-                issue_number: prNumber,
-                per_page: 100
-              });
-              const exists = comments.some(c => typeof c.body === 'string' && c.body.includes(marker));
-              if (!exists) {
-                await github.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
+            async function waitForMergeableState(prNumber) {
+              const start = Date.now();
+
+              while (true) {
+                const pr = await getPullRequest(prNumber);
+
+                if (pr.mergeable !== "UNKNOWN") {
+                  return pr;
+                }
+
+                if (
+                  (Date.now() - start) / 1000 >
+                  Math.min(maxCiWaitSeconds, 120)
+                ) {
+                  throw new Error(
+                    "GitHub vẫn trả về trạng thái mergeable=UNKNOWN sau thời gian chờ."
+                  );
+                }
+
+                console.log(
+                  "GitHub chưa xác định trạng thái mergeable. Đang chờ..."
+                );
+
+                await sleep(5000);
               }
             }
 
-            async function getWorkflowRunsForRepo() {
-              return github.paginate(github.rest.actions.listWorkflowRunsForRepo, {
-                owner,
-                repo,
-                per_page: 100
-              });
+            async function getAllCheckRuns(headSha) {
+              const checkRuns = [];
+
+              let page = 1;
+
+              while (true) {
+                const response =
+                  await github.rest.checks.listForRef({
+                    owner,
+                    repo,
+                    ref: headSha,
+                    per_page: 100,
+                    page
+                  });
+
+                checkRuns.push(...(response.data.check_runs || []));
+
+                if (response.data.check_runs.length < 100) {
+                  break;
+                }
+
+                page++;
+              }
+
+              return checkRuns;
             }
 
-            async function getCheckRunsForSha(headSha) {
-              return github.paginate(github.rest.checks.listForRef, {
-                owner,
-                repo,
-                ref: headSha,
-                per_page: 100
-              });
-            }
+            async function getCombinedStatus(headSha) {
+              const response =
+                await github.rest.repos.getCombinedStatusForRef({
+                  owner,
+                  repo,
+                  ref: headSha
+                });
 
-            async function getCombinedStatuses(headSha) {
-              const response = await github.rest.repos.getCombinedStatusForRef({
-                owner,
-                repo,
-                ref: headSha,
-                per_page: 100
-              });
               return response.data;
             }
 
-            async function waitForAllCIToSettle(headSha, prNumber) {
-              const deadline = Date.now() + maxCiWaitSeconds * 1000;
+            async function waitForAllCIToSettle(prNumber, headSha) {
+              const startTime = Date.now();
 
-              while (Date.now() < deadline) {
-                const [allWorkflowRuns, checkRuns, combinedStatus] = await Promise.all([
-                  getWorkflowRunsForRepo(),
-                  getCheckRunsForSha(headSha),
-                  getCombinedStatuses(headSha)
-                ]);
+              while (true) {
+                const checkRuns = await getAllCheckRuns(headSha);
+                const combinedStatus = await getCombinedStatus(headSha);
 
-                // Lọc danh sách workflow runs liên quan tới PR hiện tại
-                const workflowRuns = allWorkflowRuns.filter(run =>
-                  run.head_sha === headSha ||
-                  run.pull_requests?.some(pr => pr.number === prNumber)
-                );
+                const currentRunId = context.runId;
 
-                // Only repository-owned CI is a merge gate. Third-party AI/security
-                // integrations are handled separately and must not make this loop
-                // wait forever when they are pending or unavailable.
-                const requiredWorkflowRuns = workflowRuns.filter(run =>
-                  run.name === 'CI - Build & Test (Offshore PTW)'
-                );
-                const requiredCheckRuns = checkRuns.filter(run =>
-                  run.name === 'CI - Build & Test (Offshore PTW)' ||
-                  run.name === 'Typecheck / Test / Build'
-                );
-
-                const sawCi = requiredWorkflowRuns.some(run =>
-                  run.event === 'pull_request' &&
-                  run.pull_requests?.some(pr => pr.number === prNumber) &&
-                  run.status === 'completed'
-                );
-
-                const pendingWorkflows = requiredWorkflowRuns.filter(run => run.status !== 'completed');
-                const pendingChecks = requiredCheckRuns.filter(run => run.status !== 'completed');
-
-                if (sawCi && pendingWorkflows.length === 0 && pendingChecks.length === 0) {
-                  return {
-                    workflowRuns: requiredWorkflowRuns,
-                    checkRuns: requiredCheckRuns,
-                    combinedStatus
-                  };
-                }
-
-                const pendingNames = [
-                  ...pendingWorkflows.map(r => `workflow:${r.name}`),
-                  ...pendingChecks.map(r => `check:${r.name}`)
-                ];
-
-                core.info(
-                  `Waiting for project CI to settle. Pending: ${pendingNames.join(', ') || 'CI has not reported yet'}`
-                );
-                await sleep(10000);
-              }
-
-              throw new Error(`Project CI did not settle within ${maxCiWaitSeconds} seconds.`);
-            }
-
-            async function fetchJobLog(jobId) {
-              const response = await fetch(
-                `https://api.github.com/repos/${owner}/${repo}/actions/jobs/${jobId}/logs`,
-                {
-                  headers: {
-                    Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-                    Accept: 'application/vnd.github+json',
-                    'X-GitHub-Api-Version': '2026-03-10'
-                  },
-                  redirect: 'follow'
-                }
-              );
-              if (!response.ok) throw new Error(`HTTP ${response.status} while downloading job log ${jobId}`);
-              return response.text();
-            }
-
-            async function collectFailureReports(failedWorkflowRuns, failedExternalChecks) {
-              const reports = [];
-
-              for (const run of failedWorkflowRuns.slice(0, 8)) {
-                let jobs = [];
-                try {
-                  jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
-                    owner,
-                    repo,
-                    run_id: run.id,
-                    per_page: 100
-                  });
-                } catch (error) {
-                  reports.push({
-                    title: run.name,
-                    url: run.html_url,
-                    text: `Không thể lấy danh sách job của workflow: ${error.message || error}`,
-                    fileHits: []
-                  });
-                  continue;
-                }
-
-                const failedJobs = jobs.filter(job => job.conclusion && !allowedSuccessfulConclusions.has(job.conclusion));
-                for (const job of failedJobs.slice(0, 6)) {
-                  let logText = '';
-                  try {
-                    logText = await fetchJobLog(job.id);
-                  } catch (error) {
-                    logText = `Không thể tải log job: ${error.message || error}`;
+                const relevantCheckRuns = checkRuns.filter((check) => {
+                  // Do not let this Final Gate workflow block itself.
+                  if (
+                    check.name === "Final PR gate" &&
+                    check.external_id &&
+                    String(check.external_id).includes(String(currentRunId))
+                  ) {
+                    return false;
                   }
 
-                  const details = extractErrorDetails(logText);
-                  reports.push({
-                    title: `${run.name} / ${job.name}`,
-                    url: job.html_url || run.html_url,
-                    text: details.snippets.join('\n---\n').slice(-7000) || 'Không tìm thấy dòng lỗi rõ ràng trong log.',
-                    fileHits: details.fileHits
-                  });
-                }
-              }
-
-              for (const check of failedExternalChecks.slice(0, 8)) {
-                reports.push({
-                  title: check.name,
-                  url: check.details_url || check.html_url,
-                  text: `Check ngoài GitHub Actions kết thúc với trạng thái: ${check.conclusion || check.status}`,
-                  fileHits: []
+                  return true;
                 });
-              }
 
-              return reports;
-            }
+                const pendingChecks = relevantCheckRuns.filter(
+                  (check) => check.status !== "completed"
+                );
 
-            async function requestChangesForCiFailure(prNumber, headSha, reports) {
-              const fileLines = [];
-              const seen = new Set();
-              for (const report of reports) {
-                for (const hit of report.fileHits) {
-                  const key = `${hit.path}:${hit.line}`;
-                  if (!seen.has(key)) {
-                    seen.add(key);
-                    fileLines.push(`${hit.path}:${hit.line}${hit.column ? `:${hit.column}` : ''}`);
+                const failedChecks = relevantCheckRuns.filter((check) =>
+                  blockingConclusions.has(
+                    String(check.conclusion || "").toUpperCase()
+                  )
+                );
+
+                const unexpectedChecks = relevantCheckRuns.filter((check) => {
+                  if (check.status !== "completed") {
+                    return false;
                   }
-                  if (fileLines.length >= 20) break;
-                }
-                if (fileLines.length >= 20) break;
-              }
 
-              const reportSections = reports.map(report => [
-                `### ${report.title}`,
-                `[Mở log/check](${report.url})`,
-                '```text',
-                report.text.slice(-7000),
-                '```'
-              ].join('\n')).join('\n\n');
+                  const conclusion = String(
+                    check.conclusion || ""
+                  ).toUpperCase();
 
-              const body = [
-                'Vui lòng sửa hết lỗi trước khi hợp nhất.',
-                '',
-                'Workflow này đã phát hiện test/CI thất bại và tự động lấy log để xác định lỗi.',
-                fileLines.length ? `Các file/dòng lỗi được tìm thấy:\n${fileLines.map(x => `- \`${x}\``).join('\n')}` : 'Log chưa cung cấp được file:dòng lỗi rõ ràng.',
-                '',
-                reportSections.slice(0, 20000)
-              ].join('\n');
-
-              await github.rest.pulls.createReview({
-                owner,
-                repo,
-                pull_number: prNumber,
-                event: 'REQUEST_CHANGES',
-                body
-              });
-
-              const marker = `<!-- pr-final-gate:ci-failure:${headSha} -->`;
-              await addCommentOnce(prNumber, marker, `${marker}\nVui lòng sửa hết lỗi trước khi hợp nhất.\n\n${body}`.slice(0, 60000));
-            }
-
-            async function approveIfNeeded(prNumber, headSha, reviews) {
-              const ownApproval = reviews.find(review =>
-                review.user?.login === 'github-actions[bot]' &&
-                review.state === 'APPROVED' &&
-                review.commit_id === headSha
-              );
-
-              if (ownApproval) return;
-
-              await github.rest.pulls.createReview({
-                owner,
-                repo,
-                pull_number: prNumber,
-                event: 'APPROVE',
-                body: 'tất cả test đã pass về mặt kỹ thuật, có thể được xem xét.',
-                commit_id: headSha
-              });
-            }
-
-            const prNumber = await getPullRequestNumber();
-            if (!prNumber) {
-              core.notice('This event is not associated with a pull request; nothing to do.');
-              return;
-            }
-
-            const prResponse = await github.rest.pulls.get({
-              owner,
-              repo,
-              pull_number: prNumber
-            });
-            const pr = prResponse.data;
-
-            if (pr.state !== 'open') {
-              core.notice('Pull request is not open; nothing to do.');
-              return;
-            }
-
-            const currentHeadSha = pr.head.sha;
-            const currentLabels = new Set((pr.labels || []).map(label => label.name));
-            const hasReadyLabel = currentLabels.has(readyLabel);
-            const prAuthorLogin = pr.user?.login || '';
-
-            const graph = await getPullRequestGraphQL(prNumber);
-            const prGraph = graph.repository.pullRequest;
-
-            // The ready label is the explicit authorization gate. This workflow never adds it.
-            if (context.eventName === 'pull_request_target' && context.payload.action === 'labeled' && context.payload.label?.name === readyLabel) {
-              try {
-                const permission = await github.rest.repos.getCollaboratorPermissionLevel({
-                  owner,
-                  repo,
-                  username: context.actor
-                });
-                if (permission.data.permission !== 'admin') {
-                  await github.rest.issues.removeLabel({
-                    owner,
-                    repo,
-                    issue_number: prNumber,
-                    name: readyLabel
-                  });
-                  await addCommentOnce(
-                    prNumber,
-                    `<!-- pr-final-gate:unauthorized-label:${currentHeadSha} -->`,
-                    `<!-- pr-final-gate:unauthorized-label:${currentHeadSha} -->\nNhãn \`${readyLabel}\` chỉ được chấp nhận khi được thêm bởi chủ kho lưu trữ/người có quyền quản trị. Nhãn đã được gỡ.`
+                  return (
+                    conclusion &&
+                    !allowedConclusions.has(conclusion) &&
+                    !blockingConclusions.has(conclusion)
                   );
+                });
+
+                const pendingStatuses =
+                  (combinedStatus.statuses || []).filter(
+                    (status) => status.state === "pending"
+                  );
+
+                const failedStatuses =
+                  (combinedStatus.statuses || []).filter((status) =>
+                    ["failure", "error"].includes(status.state)
+                  );
+
+                console.log(
+                  [
+                    `CI status for SHA ${headSha}:`,
+                    `checks=${relevantCheckRuns.length}`,
+                    `pendingChecks=${pendingChecks.length}`,
+                    `failedChecks=${failedChecks.length}`,
+                    `pendingStatuses=${pendingStatuses.length}`,
+                    `failedStatuses=${failedStatuses.length}`
+                  ].join(" ")
+                );
+
+                if (failedChecks.length > 0) {
+                  const names = failedChecks
+                    .map(
+                      (check) =>
+                        `${check.name} (${check.conclusion})`
+                    )
+                    .join(", ");
+
+                  throw new Error(
+                    `CI thất bại: ${names}`
+                  );
+                }
+
+                if (failedStatuses.length > 0) {
+                  const names = failedStatuses
+                    .map((status) => status.context)
+                    .join(", ");
+
+                  throw new Error(
+                    `GitHub Status thất bại: ${names}`
+                  );
+                }
+
+                if (unexpectedChecks.length > 0) {
+                  const names = unexpectedChecks
+                    .map(
+                      (check) =>
+                        `${check.name} (${check.conclusion})`
+                    )
+                    .join(", ");
+
+                  throw new Error(
+                    `CI có conclusion không được phép: ${names}`
+                  );
+                }
+
+                if (
+                  pendingChecks.length === 0 &&
+                  pendingStatuses.length === 0
+                ) {
+                  console.log(
+                    "Tất cả check/status liên quan đến commit hiện tại đã hoàn thành."
+                  );
+
                   return;
                 }
-              } catch (error) {
-                core.warning(`Could not verify who added the ready label: ${error.message || error}`);
-                // Fail closed: do not treat an unverified label addition as authorization.
-                if (hasReadyLabel) {
-                  await github.rest.issues.removeLabel({
+
+                if (
+                  (Date.now() - startTime) / 1000 >
+                  maxCiWaitSeconds
+                ) {
+                  throw new Error(
+                    `Timeout (${maxCiWaitSeconds}s) khi chờ CI hoàn thành.`
+                  );
+                }
+
+                console.log(
+                  `Đang chờ ${pendingChecks.length + pendingStatuses.length} check/status...`
+                );
+
+                await sleep(pollIntervalSeconds * 1000);
+              }
+            }
+
+            async function getReviewThreads(prNumber) {
+              const threads = [];
+              let after = null;
+
+              do {
+                const data = await github.graphql(
+                  `
+                    query(
+                      $owner: String!
+                      $repo: String!
+                      $number: Int!
+                      $after: String
+                    ) {
+                      repository(owner: $owner, name: $repo) {
+                        pullRequest(number: $number) {
+                          reviewThreads(
+                            first: 100
+                            after: $after
+                          ) {
+                            nodes {
+                              isResolved
+                              comments(first: 1) {
+                                nodes {
+                                  author {
+                                    login
+                                    __typename
+                                  }
+                                  body
+                                  path
+                                  line
+                                  url
+                                }
+                              }
+                            }
+                            pageInfo {
+                              hasNextPage
+                              endCursor
+                            }
+                          }
+                        }
+                      }
+                    }
+                  `,
+                  {
                     owner,
                     repo,
-                    issue_number: prNumber,
-                    name: readyLabel
+                    number: prNumber,
+                    after
+                  }
+                );
+
+                const connection =
+                  data.repository.pullRequest.reviewThreads;
+
+                threads.push(...(connection.nodes || []));
+
+                after = connection.pageInfo.hasNextPage
+                  ? connection.pageInfo.endCursor
+                  : null;
+              } while (after);
+
+              return threads;
+            }
+
+            async function checkReviews(prNumber, prAuthorLogin) {
+              const reviews = [];
+              let page = 1;
+
+              while (true) {
+                const response =
+                  await github.rest.pulls.listReviews({
+                    owner,
+                    repo,
+                    pull_number: prNumber,
+                    per_page: 100,
+                    page
                   });
+
+                reviews.push(...(response.data || []));
+
+                if (response.data.length < 100) {
+                  break;
                 }
-                return;
-              }
-            }
 
-            if (!hasReadyLabel) {
-              await disableAutoMerge(prGraph.id, !!prGraph.autoMergeRequest);
-              core.notice(`Required label "${readyLabel}" is absent. Auto-merge is not allowed.`);
-              return;
-            }
-
-            if (prGraph.isDraft) {
-              await disableAutoMerge(prGraph.id, !!prGraph.autoMergeRequest);
-              core.notice('Draft PRs are not auto-merged.');
-              return;
-            }
-
-            // Wait until all Actions workflows/checks associated with this exact head SHA are finished.
-            const ci = await waitForAllCIToSettle(currentHeadSha, prNumber);
-            const workflowRuns = ci.workflowRuns;
-            const checkRuns = ci.checkRuns;
-            const combinedStatus = ci.combinedStatus;
-
-            const failedWorkflowRuns = workflowRuns.filter(run => {
-              return run.status === 'completed' && blockingConclusions.has(run.conclusion);
-            });
-            const failedExternalChecks = checkRuns.filter(run => {
-              const required =
-                run.name === 'CI - Build & Test (Offshore PTW)' ||
-                run.name === 'Typecheck / Test / Build';
-              return required && run.status === 'completed' && !allowedSuccessfulConclusions.has(run.conclusion);
-            });
-            const failedCommitStatuses = (combinedStatus.contexts || []).filter(status => {
-              const contextName = String(status.context || '');
-              const required =
-                contextName === 'CI - Build & Test (Offshore PTW)' ||
-                contextName === 'Typecheck / Test / Build';
-              return required && status.state !== 'success';
-            });
-
-            const ciFailed = failedWorkflowRuns.length > 0 || failedExternalChecks.length > 0 || failedCommitStatuses.length > 0;
-
-            if (ciFailed) {
-              await disableAutoMerge(prGraph.id, !!prGraph.autoMergeRequest);
-              const reports = await collectFailureReports(failedWorkflowRuns, failedExternalChecks);
-
-              if (failedCommitStatuses.length > 0) {
-                reports.push(...failedCommitStatuses.slice(0, 8).map(status => ({
-                  title: `Commit status: ${status.context}`,
-                  url: status.target_url,
-                  text: `Commit status thất bại với state=${status.state}.`,
-                  fileHits: []
-                })));
+                page++;
               }
 
-              if (reports.length > 0) {
-                await requestChangesForCiFailure(prNumber, currentHeadSha, reports);
-              }
+              const humanReviews = reviews.filter((review) => {
+                const user = review.user;
 
-              core.setFailed('CI/test checks are not all successful. Auto-merge is blocked.');
-              return;
-            }
-
-            // Review state: each human reviewer must have no latest state other than APPROVED.
-            const reviews = await github.paginate(github.rest.pulls.listReviews, {
-              owner,
-              repo,
-              pull_number: prNumber,
-              per_page: 100
-            });
-
-            const requestedReviewers = (pr.requested_reviewers || []).map(user => user.login).filter(Boolean);
-
-            const latestReviewByHuman = new Map();
-            for (const review of reviews) {
-              if (!isRelevantHuman(review.user, prAuthorLogin)) continue;
-              if (!review.submitted_at) continue;
-              const existing = latestReviewByHuman.get(review.user.login);
-              if (!existing || new Date(review.submitted_at) > new Date(existing.submitted_at)) {
-                latestReviewByHuman.set(review.user.login, review);
-              }
-            }
-
-            const blockingReviews = [...latestReviewByHuman.values()].filter(review => {
-              return review.state === 'CHANGES_REQUESTED' || review.state === 'COMMENTED';
-            });
-
-            const reviewThreads = await getReviewThreads(prNumber);
-            const unresolvedReviewerThreads = reviewThreads.filter(thread => {
-              if (thread.isResolved) return false;
-              const firstComment = thread.comments?.nodes?.[0];
-              return isRelevantHuman(firstComment?.author, prAuthorLogin);
-            });
-
-            const reviewerProblemExists = blockingReviews.length > 0 || unresolvedReviewerThreads.length > 0 || requestedReviewers.length > 0;
-
-            // A requested reviewer who has not yet submitted an APPROVED review is still a reviewer gate.
-            if (requestedReviewers.some(login => !latestReviewByHuman.has(login))) {
-              await disableAutoMerge(prGraph.id, !!prGraph.autoMergeRequest);
-              core.notice('A review has been requested but has not yet been submitted/approved.');
-              return;
-            }
-
-            if (unresolvedReviewerThreads.length > 0) {
-              await disableAutoMerge(prGraph.id, !!prGraph.autoMergeRequest);
-              await addCommentOnce(
-                prNumber,
-                `<!-- pr-final-gate:unresolved-review:${currentHeadSha} -->`,
-                `<!-- pr-final-gate:unresolved-review:${currentHeadSha} -->\nkhông thể hợp nhất khi có reviewer\n\nCó ít nhất một bình luận reviewer đang ở trạng thái **chưa được giải quyết**. Nhãn vẫn được giữ nguyên và auto-merge không được bật.`
-              );
-              core.notice('Unresolved reviewer threads block auto-merge; the ready label is intentionally retained.');
-              return;
-            }
-
-            if (blockingReviews.length > 0) {
-              await disableAutoMerge(prGraph.id, !!prGraph.autoMergeRequest);
-              await github.rest.issues.removeLabel({
-                owner,
-                repo,
-                issue_number: prNumber,
-                name: readyLabel
+                return (
+                  !!user?.login &&
+                  user.login !== prAuthorLogin &&
+                  !isBotUser(user)
+                );
               });
 
-              const reviewers = [...new Set(blockingReviews.map(review => review.user.login))];
-              await addCommentOnce(
-                prNumber,
-                `<!-- pr-final-gate:reviewer-block:${currentHeadSha} -->`,
-                `<!-- pr-final-gate:reviewer-block:${currentHeadSha} -->\nkhông thể hợp nhất khi có reviewer\n\nReviewer: ${reviewers.map(login => `@${login}`).join(', ')}. Nhãn \`${readyLabel}\` đã được tự động gỡ. Sau khi vấn đề được giải quyết, chủ kho lưu trữ phải thêm lại nhãn để cấp phép hợp nhất tự động.`
+              const changesRequested = humanReviews.filter(
+                (review) =>
+                  String(review.state).toUpperCase() ===
+                  "CHANGES_REQUESTED"
               );
-              core.notice('Reviewer feedback blocks auto-merge and the ready label was removed.');
-              return;
+
+              const latestByReviewer = new Map();
+
+              for (const review of humanReviews) {
+                const login = review.user.login;
+
+                latestByReviewer.set(login, review);
+              }
+
+              const latestReviews = [...latestByReviewer.values()];
+
+              const blockingLatestReviews =
+                latestReviews.filter(
+                  (review) =>
+                    String(review.state).toUpperCase() ===
+                    "CHANGES_REQUESTED"
+                );
+
+              if (changesRequested.length > 0) {
+                const names = [
+                  ...new Set(
+                    changesRequested.map(
+                      (review) => review.user.login
+                    )
+                  )
+                ];
+
+                throw new Error(
+                  `PR có review CHANGES_REQUESTED từ: ${names.join(", ")}`
+                );
+              }
+
+              if (blockingLatestReviews.length > 0) {
+                const names = blockingLatestReviews.map(
+                  (review) => review.user.login
+                );
+
+                throw new Error(
+                  `Reviewer hiện tại vẫn yêu cầu thay đổi: ${names.join(", ")}`
+                );
+              }
+
+              const threads = await getReviewThreads(prNumber);
+
+              const unresolvedHumanThreads = threads.filter(
+                (thread) => {
+                  if (thread.isResolved) {
+                    return false;
+                  }
+
+                  const author =
+                    thread.comments?.nodes?.[0]?.author;
+
+                  return (
+                    author &&
+                    author.login !== prAuthorLogin &&
+                    !isBotUser(author)
+                  );
+                }
+              );
+
+              if (unresolvedHumanThreads.length > 0) {
+                console.log(
+                  `Có ${unresolvedHumanThreads.length} review thread chưa được resolve.`
+                );
+              }
+
+              console.log(
+                `Review check: ${humanReviews.length} review của người dùng khác tác giả.`
+              );
+
+              return {
+                humanReviews,
+                latestReviews,
+                unresolvedHumanThreads
+              };
             }
 
-            // No blocking human review remains. Only APPROVED human reviews are allowed.
-            const invalidHumanReviews = [...latestReviewByHuman.values()].filter(review => review.state !== 'APPROVED' && review.state !== 'DISMISSED');
-            if (invalidHumanReviews.length > 0) {
-              await disableAutoMerge(prGraph.id, !!prGraph.autoMergeRequest);
-              core.notice('A human review exists with a non-approval state; auto-merge remains blocked.');
-              return;
+            async function enableAutoMerge(pr) {
+              if (pr.autoMergeRequest) {
+                console.log(
+                  `Auto-Merge đã được bật trước đó với phương thức ${pr.autoMergeRequest.mergeMethod}.`
+                );
+
+                return;
+              }
+
+              console.log(
+                `Đang bật Auto-Merge bằng phương thức ${mergeMethod}...`
+              );
+
+              const mutation = `
+                mutation(
+                  $pullRequestId: ID!
+                  $mergeMethod: PullRequestMergeMethod!
+                ) {
+                  enablePullRequestAutoMerge(
+                    input: {
+                      pullRequestId: $pullRequestId
+                      mergeMethod: $mergeMethod
+                    }
+                  ) {
+                    pullRequest {
+                      autoMergeRequest {
+                        enabledAt
+                        mergeMethod
+                      }
+                    }
+                  }
+                }
+              `;
+
+              try {
+                const result = await github.graphql(
+                  mutation,
+                  {
+                    pullRequestId: pr.id,
+                    mergeMethod
+                  }
+                );
+
+                const autoMerge =
+                  result.enablePullRequestAutoMerge
+                    ?.pullRequest
+                    ?.autoMergeRequest;
+
+                if (!autoMerge) {
+                  throw new Error(
+                    "GitHub không trả về autoMergeRequest sau khi bật Auto-Merge."
+                  );
+                }
+
+                console.log(
+                  `🎉 Auto-Merge đã được bật cho PR #${pr.number}.`
+                );
+
+                console.log(
+                  `Phương thức merge: ${autoMerge.mergeMethod}`
+                );
+              } catch (error) {
+                // IMPORTANT:
+                // Do NOT fall back to REST merge.
+                // REST merge would merge immediately and could bypass
+                // the intended Auto-Merge/branch-protection flow.
+                throw new Error(
+                  `Không thể bật Auto-Merge cho PR #${pr.number}: ${error.message}`
+                );
+              }
             }
 
-            // All CI passed, there are no blocking reviews/comments, and the explicit label is present.
-            await approveIfNeeded(prNumber, currentHeadSha, reviews);
+            async function main() {
+              const prNumber = getPullRequestNumber();
 
-            // Re-fetch after our approval to ensure the PR head did not change during evaluation.
-            const latestPrResponse = await github.rest.pulls.get({
-              owner,
-              repo,
-              pull_number: prNumber
-            });
-            if (latestPrResponse.data.head.sha !== currentHeadSha) {
-              await disableAutoMerge(prGraph.id, !!prGraph.autoMergeRequest);
-              core.warning('PR head changed during evaluation; auto-merge was not enabled for the stale SHA.');
-              return;
+              if (!prNumber) {
+                console.log(
+                  "Không tìm thấy số PR hợp lệ. Bỏ qua."
+                );
+                return;
+              }
+
+              console.log(
+                `Đang phân tích PR #${prNumber}...`
+              );
+
+              let pr = await getPullRequest(prNumber);
+
+              if (!pr) {
+                throw new Error(
+                  `Không tìm thấy PR #${prNumber}.`
+                );
+              }
+
+              if (pr.state !== "OPEN") {
+                console.log(
+                  `PR #${prNumber} không còn mở (${pr.state}). Bỏ qua.`
+                );
+                return;
+              }
+
+              if (pr.draft) {
+                console.log(
+                  `PR #${prNumber} vẫn đang ở trạng thái Draft. Bỏ qua.`
+                );
+                return;
+              }
+
+              const labels = (pr.labels?.nodes || []).map(
+                (label) => label.name
+              );
+
+              if (!labels.includes(readyLabel)) {
+                console.log(
+                  `PR chưa có nhãn '${readyLabel}'. Bỏ qua.`
+                );
+                return;
+              }
+
+              console.log(
+                `Đã tìm thấy nhãn '${readyLabel}'.`
+              );
+
+              const headSha = pr.headRefOid;
+
+              if (!headSha) {
+                throw new Error(
+                  "Không lấy được HEAD SHA của PR."
+                );
+              }
+
+              console.log(
+                `HEAD SHA hiện tại: ${headSha}`
+              );
+
+              // 1. Wait for all CI/checks for the CURRENT commit.
+              await waitForAllCIToSettle(
+                prNumber,
+                headSha
+              );
+
+              // 2. Re-read PR after CI because the PR may have changed
+              // while CI was running.
+              pr = await waitForMergeableState(prNumber);
+
+              if (pr.headRefOid !== headSha) {
+                throw new Error(
+                  "HEAD SHA của PR đã thay đổi trong lúc chờ CI. Không bật Auto-Merge cho commit cũ."
+                );
+              }
+
+              // 3. Check reviews.
+              await checkReviews(
+                prNumber,
+                pr.author?.login || ""
+              );
+
+              // 4. Re-check mergeable state.
+              if (pr.mergeable === "CONFLICTING") {
+                throw new Error(
+                  "PR đang bị xung đột (CONFLICTING). Không thể bật Auto-Merge."
+                );
+              }
+
+              if (pr.mergeable !== "MERGEABLE") {
+                throw new Error(
+                  `PR chưa ở trạng thái MERGEABLE. Trạng thái hiện tại: ${pr.mergeable}`
+                );
+              }
+
+              // 5. Final label check after all asynchronous work.
+              const finalLabels = (pr.labels?.nodes || []).map(
+                (label) => label.name
+              );
+
+              if (!finalLabels.includes(readyLabel)) {
+                console.log(
+                  `Nhãn '${readyLabel}' đã bị gỡ trong lúc kiểm tra. Không bật Auto-Merge.`
+                );
+                return;
+              }
+
+              // 6. Enable Auto-Merge only.
+              // Never directly merge as a fallback.
+              await enableAutoMerge(pr);
+
+              console.log(
+                `✅ Final Gate hoàn tất cho PR #${prNumber}.`
+              );
+              console.log(
+                "CI đã pass, nhãn hợp lệ, review không yêu cầu thay đổi, PR không conflict và Auto-Merge đã được bật."
+              );
             }
 
-            // The approval above triggers pull_request_review again, but duplicate approvals for the same SHA are avoided.
-            await enableAutoMerge(prGraph.id, currentHeadSha);
-            core.notice('All configured gates passed. Auto-merge is enabled.');
+            await main();
