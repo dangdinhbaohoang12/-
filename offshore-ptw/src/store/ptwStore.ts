@@ -112,6 +112,7 @@ function isAuthError(error: unknown): boolean {
  * dropped instead of reverting the UI to older data.
  */
 let latestStateToken = 0;
+const pendingLogouts = new Set<Promise<unknown>>();
 function nextStateToken(): number {
   latestStateToken += 1;
   return latestStateToken;
@@ -166,6 +167,9 @@ export const usePtwStore = create<PtwState>((set, get) => ({
 
   login: async (username, pin) => {
     const token = nextStateToken();
+    // A late LOGOUT response can clear a cookie issued by LOGIN. Wait for
+    // every logout request already in flight before sending the login request.
+    while (pendingLogouts.size) await Promise.allSettled(pendingLogouts);
     try {
       const result = await post<{
         ok: true;
@@ -216,14 +220,18 @@ export const usePtwStore = create<PtwState>((set, get) => ({
       simulatedRole: null,
       sessionDeviceIp: null,
     });
+    const request = post('LOGOUT');
+    pendingLogouts.add(request);
     try {
-      await post('LOGOUT');
+      await request;
     } catch (error) {
       // The HttpOnly session cookie may still be valid if the server call
       // failed (network error or rejection). The caller is expected to
       // retry; local state stays cleared regardless so Back/forward can't
       // resurrect the previous session's UI.
       return failed(error);
+    } finally {
+      pendingLogouts.delete(request);
     }
     return { ok: true };
   },

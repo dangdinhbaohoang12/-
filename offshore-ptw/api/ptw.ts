@@ -1,7 +1,7 @@
 import {
   createHmac,
   randomBytes,
-  scryptSync,
+  scrypt,
   timingSafeEqual,
 } from 'node:crypto';
 
@@ -114,33 +114,53 @@ const SCRYPT_N = 131072;
 const SCRYPT_R = 8;
 const SCRYPT_P = 1;
 const SCRYPT_MAXMEM = 136 * 1024 * 1024;
+let pinDerivationActive = false;
+const pinDerivationWaiters: Array<() => void> = [];
 
-function hashPinServer(pin: string): string {
+async function derivePin(pin: string, salt: Buffer): Promise<Buffer> {
+  // Each derivation can use roughly 128 MiB. Reserve the single slot before
+  // waking the next waiter so concurrent requests cannot overlap derivations.
+  if (pinDerivationActive) {
+    await new Promise<void>((resolve) => pinDerivationWaiters.push(resolve));
+  } else {
+    pinDerivationActive = true;
+  }
+  try {
+    return await new Promise<Buffer>((resolve, reject) => {
+      scrypt(pin, salt, 32, {
+        N: SCRYPT_N,
+        r: SCRYPT_R,
+        p: SCRYPT_P,
+        maxmem: SCRYPT_MAXMEM,
+      }, (error, derived) => {
+        if (error) reject(error);
+        else resolve(derived);
+      });
+    });
+  } finally {
+    const next = pinDerivationWaiters.shift();
+    if (next) next();
+    else pinDerivationActive = false;
+  }
+}
+
+async function hashPinServer(pin: string): Promise<string> {
   if (!validPin(pin)) throw new Error('PIN phải là 4–8 chữ số.');
   const salt = randomBytes(16);
-  const derived = scryptSync(pin, salt, 32, {
-    N: SCRYPT_N,
-    r: SCRYPT_R,
-    p: SCRYPT_P,
-    maxmem: SCRYPT_MAXMEM,
-  });
+  const derived = await derivePin(pin, salt);
   return 'scrypt$v1$' + salt.toString('base64url') + '$' + derived.toString('base64url');
 }
 
-function verifyPinHash(pin: string, encoded: string): boolean {
+async function verifyPinHash(pin: string, encoded: string): Promise<boolean> {
   if (!validPin(pin) || !encoded.startsWith('scrypt$v1$')) return false;
   const parts = encoded.split('$');
   if (parts.length !== 4) return false;
   try {
     const salt = Buffer.from(parts[2], 'base64url');
     const expected = Buffer.from(parts[3], 'base64url');
-    const actual = scryptSync(pin, salt, expected.length || 32, {
-      N: SCRYPT_N,
-      r: SCRYPT_R,
-      p: SCRYPT_P,
-      maxmem: SCRYPT_MAXMEM,
-    });
-    return actual.length === expected.length && timingSafeEqual(actual, expected);
+    if (salt.length !== 16 || expected.length !== 32) return false;
+    const actual = await derivePin(pin, salt);
+    return timingSafeEqual(actual, expected);
   } catch {
     return false;
   }
@@ -433,7 +453,7 @@ async function ensureBootstrapUser(): Promise<void> {
       platform_code: platformCode,
       email: process.env.BOOTSTRAP_OIM_EMAIL || null,
       phone: process.env.BOOTSTRAP_OIM_PHONE || null,
-      pin_hash: hashPinServer(pin),
+      pin_hash: await hashPinServer(pin),
       active: true,
       must_change_pin: true,
       created_at: nowIso(),
@@ -532,7 +552,7 @@ function lockoutError(): never {
 
 /** Operational PIN check – failures are counted/locked the same way as LOGIN failures. */
 async function ensurePin(user: any, pin: string): Promise<void> {
-  if (verifyPinHash(pin, user.pin_hash)) return;
+  if (await verifyPinHash(pin, user.pin_hash)) return;
   const { lockedUntil } = await recordAuthFailure(user.id);
   if (lockedUntil && new Date(lockedUntil).getTime() > Date.now()) lockoutError();
   const error = new Error('PIN điện tử không đúng.');
@@ -552,7 +572,7 @@ async function authenticateLogin(usernameInput: string, pin: string): Promise<an
     lockoutError();
   }
 
-  if (!user.active || !verifyPinHash(pin, user.pin_hash)) {
+  if (!user.active || !(await verifyPinHash(pin, user.pin_hash))) {
     const { lockedUntil } = await recordAuthFailure(user.id);
     if (lockedUntil && new Date(lockedUntil).getTime() > now) lockoutError();
     const error = new Error('Username hoặc PIN không đúng.');
@@ -1416,12 +1436,12 @@ async function changeOwnPin(user: any, body: any, res: AnyResponse): Promise<any
   const currentPin = String(body.currentPin ?? '');
   const newPin = String(body.newPin ?? '');
   if (!validPin(newPin)) badRequest('PIN mới phải là 4–8 chữ số.');
-  if (!verifyPinHash(currentPin, user.pin_hash)) forbidden('PIN hiện tại không đúng.');
-  if (verifyPinHash(newPin, user.pin_hash)) badRequest('PIN mới phải khác PIN hiện tại.');
+  await ensurePin(user, currentPin);
+  if (await verifyPinHash(newPin, user.pin_hash)) badRequest('PIN mới phải khác PIN hiện tại.');
 
   const sessionVersion = Number(user.session_version) + 1;
   const updated = await updateUser(user.id, {
-    pin_hash: hashPinServer(newPin),
+    pin_hash: await hashPinServer(newPin),
     must_change_pin: false,
     failed_login_count: 0,
     locked_until: null,
@@ -1457,7 +1477,7 @@ async function createUserAccount(user: any, body: any, req: AnyRequest): Promise
       phone: input.phone || null,
       organization: input.organization || null,
       certification_number: input.certificationNumber || null,
-      pin_hash: hashPinServer(initialPin),
+      pin_hash: await hashPinServer(initialPin),
       active: true,
       must_change_pin: true,
       created_at: nowIso(),
@@ -1486,7 +1506,7 @@ async function changeUserPin(user: any, body: any, req: AnyRequest): Promise<voi
     'update',
     {
       id: target.id,
-      pin_hash: hashPinServer(newPin),
+      pin_hash: await hashPinServer(newPin),
       must_change_pin: true,
       failed_login_count: 0,
       locked_until: '',

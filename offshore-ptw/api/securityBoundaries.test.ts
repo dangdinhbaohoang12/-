@@ -1,6 +1,24 @@
 import { createHmac, scryptSync } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const derivationStats = vi.hoisted(() => ({ active: 0, peak: 0 }));
+vi.mock('node:crypto', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:crypto')>();
+  return {
+    ...actual,
+    scrypt: (pin: string, salt: Buffer, length: number,
+      options: { N: number; r: number; p: number; maxmem: number },
+      callback: (error: Error | null, derived: Buffer) => void) => {
+      derivationStats.active += 1;
+      derivationStats.peak = Math.max(derivationStats.peak, derivationStats.active);
+      actual.scrypt(pin, salt, length, options, (error, derived) => {
+        derivationStats.active -= 1;
+        callback(error, derived);
+      });
+    },
+  };
+});
+
 const sessionSecret = 'test-session-secret-with-at-least-32-characters';
 const operatorPin = '24681357';
 const salt = Buffer.alloc(16, 7);
@@ -11,6 +29,7 @@ let handler: typeof import('./ptw').default;
 let userRows: any[];
 let permitRows: any[];
 let transactions: Array<{ path: string; body: any }>;
+let lockOnFailure = false;
 
 beforeAll(async () => {
   vi.stubEnv('SUPABASE_URL', 'https://supabase.example.test');
@@ -26,6 +45,8 @@ afterAll(() => {
 });
 
 beforeEach(() => {
+  derivationStats.active = 0;
+  derivationStats.peak = 0;
   userRows = [
     { id: 'oim', username: 'oim', full_name: 'OIM', role: 'OIM', platform_code: 'MT1',
       pin_hash: operatorHash, active: true, session_version: 1, must_change_pin: false },
@@ -37,12 +58,15 @@ beforeEach(() => {
     gasTests: [], statusHistory: [], approvalChain: [], applicantUserId: 'target',
   } }];
   transactions = [];
+  lockOnFailure = false;
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
     const path = url.pathname;
     if (path.includes('/rpc/')) {
       transactions.push({ path, body: JSON.parse(String(init?.body)) });
-      return Response.json([]);
+      return Response.json(lockOnFailure
+        ? [{ failed_login_count: 5, locked_until: new Date(Date.now() + 60_000).toISOString() }]
+        : []);
     }
     if (path.endsWith('/ptw_users')) {
       if (init?.method === 'POST') throw new Error('Unexpected bootstrap insert');
@@ -80,6 +104,37 @@ const readings = [
 ];
 
 describe('server controlled security evidence', () => {
+  it('limits concurrent PIN derivations to one', async () => {
+    const responses = await Promise.all([
+      post({ operation: 'CHANGE_OWN_PIN', currentPin: '0000', newPin: '87654321' }),
+      post({ operation: 'CHANGE_OWN_PIN', currentPin: '1111', newPin: '87654321' }),
+    ]);
+    expect(responses.map(({ status }) => status)).toEqual([403, 403]);
+    expect(derivationStats.peak).toBe(1);
+  });
+
+  it('counts an incorrect current PIN toward account lockout', async () => {
+    const response = await post({ operation: 'CHANGE_OWN_PIN', currentPin: '0000', newPin: '87654321' });
+    expect(response.status).toBe(403);
+    expect(transactions).toContainEqual({
+      path: '/rest/v1/rpc/ptw_record_auth_failure',
+      body: { p_user_id: 'oim', p_max_failures: 5, p_lock_ms: 900000 },
+    });
+  });
+
+  it('returns lockout when an incorrect current PIN reaches the threshold', async () => {
+    lockOnFailure = true;
+    const response = await post({ operation: 'CHANGE_OWN_PIN', currentPin: '0000', newPin: '87654321' });
+    expect(response.status).toBe(429);
+    expect(transactions[0].path).toBe('/rest/v1/rpc/ptw_record_auth_failure');
+  });
+
+  it('rejects reusing the current PIN without recording an authentication failure', async () => {
+    const response = await post({ operation: 'CHANGE_OWN_PIN', currentPin: operatorPin, newPin: operatorPin });
+    expect(response.status).toBe(400);
+    expect(transactions).toHaveLength(0);
+  });
+
   it('recomputes gas reading metadata and results from server specifications', async () => {
     const response = await post({ operation: 'ADD_GAS_TEST', permitId: 'permit', pin: operatorPin,
       record: { gasDetectorId: 'D1', calibrationDueDate: new Date(Date.now() + 86_400_000).toISOString(),
