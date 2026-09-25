@@ -83,8 +83,8 @@ beforeEach(() => {
   }));
 });
 
-async function post(body: Record<string, unknown>, headers: Record<string, string> = {}) {
-  const payload = Buffer.from(JSON.stringify({ uid: 'oim', sv: 1, exp: Date.now() + 60_000 })).toString('base64url');
+async function post(body: Record<string, unknown>, headers: Record<string, string> = {}, uid = 'oim') {
+  const payload = Buffer.from(JSON.stringify({ uid, sv: 1, exp: Date.now() + 60_000 })).toString('base64url');
   const signature = createHmac('sha256', sessionSecret).update(payload).digest('base64url');
   let responseBody = '';
   const response = {
@@ -104,6 +104,18 @@ const readings = [
 ];
 
 describe('server controlled security evidence', () => {
+  it.each(['LINE_SUPERVISOR', 'PERMIT_APPLICANT'])('rejects a %s draft update targeting another platform', async (role) => {
+    userRows[1] = { ...userRows[1], role, pin_hash: operatorHash };
+    const response = await post({
+      operation: 'UPDATE_DRAFT', permitId: 'permit', pin: operatorPin,
+      patch: { areaId: 'MT2-WHP', equipmentTag: 'N/A' },
+    }, {}, 'target');
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toContain('phạm vi giàn được cấp phép');
+    expect(transactions).toHaveLength(0);
+  });
+
   it('limits concurrent PIN derivations to one', async () => {
     const responses = await Promise.all([
       post({ operation: 'CHANGE_OWN_PIN', currentPin: '0000', newPin: '87654321' }),
