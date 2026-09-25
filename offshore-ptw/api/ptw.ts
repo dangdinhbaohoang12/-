@@ -1,3 +1,8 @@
+export const config = {
+  runtime: 'nodejs',
+  maxDuration: 15,
+};
+
 import {
   createHmac,
   randomBytes,

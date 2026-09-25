@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Offshore PTW">
+  <rect width="64" height="64" rx="12" fill="#0f172a"/>
+  <path d="M16 18h32v7H23v7h19v7H23v7h25v7H16z" fill="#f8fafc"/>
+  <circle cx="48" cy="20" r="5" fill="#22c55e"/>
+</svg>
