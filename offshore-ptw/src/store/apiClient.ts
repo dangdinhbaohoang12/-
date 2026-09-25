@@ -16,18 +16,40 @@ export interface RemoteState {
 }
 
 async function request<T>(method: 'GET' | 'POST', body?: Record<string, unknown>): Promise<T> {
-  const response = await fetch('/api/ptw', {
-    method,
-    credentials: 'same-origin',
-    headers: method === 'POST' ? { 'Content-Type': 'application/json' } : undefined,
-    body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
-  });
-  const payload = await response.json().catch(() => ({}));
+  let response: Response;
+  try {
+    response = await fetch('/api/ptw', {
+      method,
+      credentials: 'same-origin',
+      headers: method === 'POST' ? { 'Content-Type': 'application/json' } : undefined,
+      body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
+    });
+  } catch {
+    const error = new Error('Không thể kết nối đến máy chủ PTW. Kiểm tra triển khai API và kết nối mạng.');
+    (error as { status?: number }).status = 0;
+    throw error;
+  }
+
+  const text = await response.text();
+  let payload: any = {};
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = {};
+    }
+  }
+
   if (!response.ok || payload.ok === false) {
-    const error = new Error(payload.error ?? 'Yêu cầu máy chủ thất bại.');
+    const fallback =
+      response.status >= 500
+        ? 'Máy chủ PTW không phản hồi đúng định dạng. Kiểm tra API /api/ptw và biến môi trường Vercel.'
+        : 'Yêu cầu máy chủ thất bại.';
+    const error = new Error(payload.error ?? fallback);
     (error as { status?: number }).status = response.status;
     throw error;
   }
+
   return payload as T;
 }
 
