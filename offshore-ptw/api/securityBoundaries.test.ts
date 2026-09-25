@@ -29,7 +29,8 @@ let handler: typeof import('./ptw').default;
 let userRows: any[];
 let permitRows: any[];
 let transactions: Array<{ path: string; body: any }>;
-let lockOnFailure = false;
+let lockOnReservation = false;
+let rejectReservation = false;
 
 beforeAll(async () => {
   vi.stubEnv('SUPABASE_URL', 'https://supabase.example.test');
@@ -58,19 +59,31 @@ beforeEach(() => {
     gasTests: [], statusHistory: [], approvalChain: [], applicantUserId: 'target',
   } }];
   transactions = [];
-  lockOnFailure = false;
+  lockOnReservation = false;
+  rejectReservation = false;
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
     const path = url.pathname;
     if (path.includes('/rpc/')) {
-      transactions.push({ path, body: JSON.parse(String(init?.body)) });
-      return Response.json(lockOnFailure
-        ? [{ failed_login_count: 5, locked_until: new Date(Date.now() + 60_000).toISOString() }]
-        : []);
+      const body = JSON.parse(String(init?.body));
+      transactions.push({ path, body });
+      if (path.endsWith('/ptw_reserve_auth_attempt')) {
+        if (rejectReservation) return Response.json([]);
+        const user = userRows.find((row) => row.id === body.p_user_id);
+        const lockedUntil = lockOnReservation ? new Date(Date.now() + 60_000).toISOString() : null;
+        if (user) Object.assign(user, { failed_login_count: lockOnReservation ? 5 : 1, locked_until: lockedUntil });
+        return Response.json([{ failed_login_count: lockOnReservation ? 5 : 1, locked_until: lockedUntil }]);
+      }
+      return Response.json([]);
     }
     if (path.endsWith('/ptw_users')) {
       if (init?.method === 'POST') throw new Error('Unexpected bootstrap insert');
       const id = url.searchParams.get('id')?.slice(3);
+      if (init?.method === 'PATCH') {
+        const user = userRows.find((row) => row.id === id);
+        if (user) Object.assign(user, JSON.parse(String(init.body)));
+        return Response.json(user ? [user] : []);
+      }
       const username = url.searchParams.get('username')?.slice(3);
       return Response.json(userRows.filter((user) => (!id || user.id === id) && (!username || user.username === username)));
     }
@@ -111,7 +124,7 @@ describe('server controlled security evidence', () => {
       patch: { areaId: 'MT2-WHP' } });
     expect(response.status).toBe(400);
     expect(response.body.error).toContain('phạm vi giàn');
-    expect(transactions).toHaveLength(0);
+    expect(transactions.map(({ path }) => path)).toEqual(['/rest/v1/rpc/ptw_reserve_auth_attempt']);
   });
 
   it('limits concurrent PIN derivations to one', async () => {
@@ -127,22 +140,47 @@ describe('server controlled security evidence', () => {
     const response = await post({ operation: 'CHANGE_OWN_PIN', currentPin: '0000', newPin: '87654321' });
     expect(response.status).toBe(403);
     expect(transactions).toContainEqual({
-      path: '/rest/v1/rpc/ptw_record_auth_failure',
+      path: '/rest/v1/rpc/ptw_reserve_auth_attempt',
       body: { p_user_id: 'oim', p_max_failures: 5, p_lock_ms: 900000 },
     });
   });
 
   it('returns lockout when an incorrect current PIN reaches the threshold', async () => {
-    lockOnFailure = true;
+    lockOnReservation = true;
     const response = await post({ operation: 'CHANGE_OWN_PIN', currentPin: '0000', newPin: '87654321' });
     expect(response.status).toBe(429);
-    expect(transactions[0].path).toBe('/rest/v1/rpc/ptw_record_auth_failure');
+    expect(transactions[0].path).toBe('/rest/v1/rpc/ptw_reserve_auth_attempt');
   });
 
-  it('rejects reusing the current PIN without recording an authentication failure', async () => {
+  it('resets the reservation after a correct current PIN even if the new PIN is rejected', async () => {
+    lockOnReservation = true;
     const response = await post({ operation: 'CHANGE_OWN_PIN', currentPin: operatorPin, newPin: operatorPin });
     expect(response.status).toBe(400);
-    expect(transactions).toHaveLength(0);
+    expect(transactions[0].path).toBe('/rest/v1/rpc/ptw_reserve_auth_attempt');
+    expect(userRows[0].failed_login_count).toBe(0);
+    expect(userRows[0].locked_until).toBeNull();
+  });
+
+  it('accepts a correct LOGIN PIN on the attempt that reaches the lock threshold', async () => {
+    lockOnReservation = true;
+    const response = await post({ operation: 'LOGIN', username: 'oim', pin: operatorPin });
+    expect(response.status).toBe(200);
+    expect(transactions[0].path).toBe('/rest/v1/rpc/ptw_reserve_auth_attempt');
+    expect(userRows[0].failed_login_count).toBe(0);
+    expect(userRows[0].locked_until).toBeNull();
+  });
+
+  it('keeps the invalid LOGIN response after reserving the attempt', async () => {
+    const response = await post({ operation: 'LOGIN', username: 'oim', pin: '0000' });
+    expect(response.status).toBe(401);
+    expect(transactions[0].path).toBe('/rest/v1/rpc/ptw_reserve_auth_attempt');
+  });
+
+  it('rejects an attempt when the reservation returns no row before deriving the PIN', async () => {
+    rejectReservation = true;
+    const response = await post({ operation: 'CHANGE_OWN_PIN', currentPin: operatorPin, newPin: '87654321' });
+    expect(response.status).toBe(429);
+    expect(derivationStats.peak).toBe(0);
   });
 
   it('recomputes gas reading metadata and results from server specifications', async () => {
@@ -151,7 +189,7 @@ describe('server controlled security evidence', () => {
         location: 'WHP', readings: readings.map((reading) => ({ ...reading, unit: 'forged', min: -999,
           max: 999, result: 'PASS' })) } });
     expect(response.status).toBe(200);
-    const gasTest = transactions[0].body.p_changes[0].data.gasTests[0];
+    const gasTest = transactions.find(({ path }) => path.endsWith('/ptw_apply_permit_transaction'))!.body.p_changes[0].data.gasTests[0];
     expect(gasTest.readings[0]).toEqual({ parameter: 'O2', value: 10, unit: '%v/v', min: 19.5,
       max: 23.5, result: 'FAIL' });
     expect(gasTest.overallResult).toBe('FAIL');
@@ -162,7 +200,7 @@ describe('server controlled security evidence', () => {
       record: { gasDetectorId: 'D1', calibrationDueDate: new Date(Date.now() + 86_400_000).toISOString(),
         location: 'WHP', readings: [...readings, extra] } });
     expect(response.status).toBe(400);
-    expect(transactions).toHaveLength(0);
+    expect(transactions.map(({ path }) => path)).toEqual(['/rest/v1/rpc/ptw_reserve_auth_attempt']);
   });
 
   it.each(['13579246', '123456'])('rejects sample bootstrap PIN %s before insert', async (pin) => {
@@ -183,6 +221,6 @@ describe('server controlled security evidence', () => {
   ])('records request IP for %s audit', async (operation, input) => {
     const response = await post({ operation, ...input }, { 'x-forwarded-for': '203.0.113.7, 10.0.0.1' });
     expect(response.status).toBe(200);
-    expect(transactions[0].body.p_audit.deviceIp).toBe('203.0.113.7');
+    expect(transactions.find(({ path }) => path.endsWith('/ptw_apply_user_transaction'))!.body.p_audit.deviceIp).toBe('203.0.113.7');
   });
 });

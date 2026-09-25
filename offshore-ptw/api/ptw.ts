@@ -526,22 +526,15 @@ function ensurePermission(role: Role, action: any): void {
   }
 }
 
-/**
- * Atomically increments the failure counter (and locks the account past the
- * threshold) in PostgreSQL so concurrent bad attempts can't race the
- * read-modify-write and bypass the lockout.
- */
-async function recordAuthFailure(userId: string): Promise<{ failedLoginCount: number; lockedUntil: string | null }> {
-  const rows = await rpc('ptw_record_auth_failure', {
+/** Reserve a PIN attempt before verification; a locked account returns no row. */
+async function reserveAuthAttempt(userId: string): Promise<{ lockedUntil: string | null }> {
+  const rows = await rpc('ptw_reserve_auth_attempt', {
     p_user_id: userId,
     p_max_failures: MAX_LOGIN_FAILURES,
     p_lock_ms: LOGIN_LOCK_MS,
   });
-  const row = rows?.[0] ?? {};
-  return {
-    failedLoginCount: Number(row.failed_login_count ?? 0),
-    lockedUntil: row.locked_until ?? null,
-  };
+  if (!rows?.[0]) lockoutError();
+  return { lockedUntil: rows[0].locked_until ?? null };
 }
 
 function lockoutError(): never {
@@ -550,11 +543,14 @@ function lockoutError(): never {
   throw error;
 }
 
-/** Operational PIN check – failures are counted/locked the same way as LOGIN failures. */
+/** Operational PIN check – attempts are reserved/locked the same way as LOGIN attempts. */
 async function ensurePin(user: any, pin: string): Promise<void> {
-  if (await verifyPinHash(pin, user.pin_hash)) return;
-  const { lockedUntil } = await recordAuthFailure(user.id);
-  if (lockedUntil && new Date(lockedUntil).getTime() > Date.now()) lockoutError();
+  const { lockedUntil } = await reserveAuthAttempt(user.id);
+  if (await verifyPinHash(pin, user.pin_hash)) {
+    await updateUser(user.id, { failed_login_count: 0, locked_until: null });
+    return;
+  }
+  if (lockedUntil) lockoutError();
   const error = new Error('PIN điện tử không đúng.');
   (error as any).status = 403;
   throw error;
@@ -564,17 +560,11 @@ async function authenticateLogin(usernameInput: string, pin: string): Promise<an
   await ensureBootstrapUser();
   const username = normalizeUsername(usernameInput);
   const user = await getUserByUsername(username);
-  const now = Date.now();
-
   if (!user) return null;
 
-  if (user.locked_until && new Date(user.locked_until).getTime() > now) {
-    lockoutError();
-  }
-
+  const { lockedUntil } = await reserveAuthAttempt(user.id);
   if (!user.active || !(await verifyPinHash(pin, user.pin_hash))) {
-    const { lockedUntil } = await recordAuthFailure(user.id);
-    if (lockedUntil && new Date(lockedUntil).getTime() > now) lockoutError();
+    if (lockedUntil) lockoutError();
     const error = new Error('Username hoặc PIN không đúng.');
     (error as any).status = 401;
     throw error;
