@@ -5,15 +5,15 @@ import {
   timingSafeEqual,
 } from 'node:crypto';
 
-import { buildApprovalChain } from '../src/engine/approvalRuleEngine';
+import { buildApprovalChain } from '../src/engine/approvalRuleEngine.js';
 import {
   GAS_SPECS,
   computeOverallResult,
   evaluateReading,
   hasAllRequiredParameters,
   isDetectorCalibrationValid,
-} from '../src/engine/gasTestEngine';
-import { detectSimopsConflicts } from '../src/engine/simopsEngine';
+} from '../src/engine/gasTestEngine.js';
+import { detectSimopsConflicts } from '../src/engine/simopsEngine.js';
 import {
   approveAtCurrentLevel,
   cancelPermit,
@@ -26,15 +26,15 @@ import {
   startWork,
   submitPermit,
   suspendPermit,
-} from '../src/engine/workflowStateMachine';
-import { checkPermission } from '../src/engine/rbacMatrix';
+} from '../src/engine/workflowStateMachine.js';
+import { checkPermission } from '../src/engine/rbacMatrix.js';
 import {
   AREAS,
   EQUIPMENT,
   PLATFORMS,
   getPermitTypeMeta,
-} from '../src/data/catalog';
-import { TERMINAL_STATUSES } from '../src/types/domain';
+} from '../src/data/catalog.js';
+import { TERMINAL_STATUSES } from '../src/types/domain.js';
 import type {
   AppNotification,
   GasParameter,
@@ -45,7 +45,7 @@ import type {
   SimopsConflict,
   StatusHistoryEntry,
   UserAccount,
-} from '../src/types/domain';
+} from '../src/types/domain.js';
 
 type AnyRequest = any;
 type AnyResponse = any;
