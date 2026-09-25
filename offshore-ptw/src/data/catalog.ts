@@ -8,6 +8,7 @@
  *   người dùng trong kho lưu trữ này (MANAGE_USERS chỉ có trong role OIM).
  * ==========================================================================*/
 
+import CryptoJS from 'crypto-js';
 import {
   Area,
   EquipmentItem,
