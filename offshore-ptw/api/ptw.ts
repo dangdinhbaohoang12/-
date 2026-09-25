@@ -98,7 +98,6 @@ interface ServerConfig {
   supabaseUrl: string;
   supabaseServiceRoleKey: string;
   ptwSessionSecret: string;
-  ptwAuditSecret: string;
 }
 
 /**
@@ -126,8 +125,11 @@ function getServerConfig(): ServerConfig {
     supabaseUrl: supabaseUrl.replace(/\/+$/, ''),
     supabaseServiceRoleKey: requiredSecret('SUPABASE_SERVICE_ROLE_KEY', 20),
     ptwSessionSecret: requiredSecret('PTW_SESSION_SECRET'),
-    ptwAuditSecret: requiredSecret('PTW_AUDIT_SECRET'),
   };
+}
+
+function getAuditSecret(): string {
+  return requiredSecret('PTW_AUDIT_SECRET');
 }
 
 function nowIso(): string {
@@ -731,7 +733,7 @@ function historyAuditEntries(before: Permit, after: Permit): Record<string, unkn
 }
 
 function signApproval(permit: Permit, actor: any, action: string, decidedAt: string): string {
-  return createHmac('sha256', getServerConfig().ptwAuditSecret)
+  return createHmac('sha256', getAuditSecret())
     .update(
       permit.id + '|' + permit.permitNumber + '|Rev' + String(permit.revisionNo) +
       '|' + action + '|' + actor.id + '|' + decidedAt
