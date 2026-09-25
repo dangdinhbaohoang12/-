@@ -20,7 +20,7 @@ import {
   PermitTypeCode,
   RiskLevel,
   WorkClassification,
-} from '../types/domain';
+} from '../types/domain.js';
 
 export interface ApprovalRuleContext {
   permitType: PermitTypeCode;

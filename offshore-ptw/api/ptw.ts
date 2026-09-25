@@ -5,15 +5,15 @@ import {
   timingSafeEqual,
 } from 'node:crypto';
 
-import { buildApprovalChain } from '../src/engine/approvalRuleEngine';
+import { buildApprovalChain } from '../src/engine/approvalRuleEngine.js';
 import {
   GAS_SPECS,
   computeOverallResult,
   evaluateReading,
   hasAllRequiredParameters,
   isDetectorCalibrationValid,
-} from '../src/engine/gasTestEngine';
-import { detectSimopsConflicts } from '../src/engine/simopsEngine';
+} from '../src/engine/gasTestEngine.js';
+import { detectSimopsConflicts } from '../src/engine/simopsEngine.js';
 import {
   approveAtCurrentLevel,
   cancelPermit,
@@ -26,15 +26,15 @@ import {
   startWork,
   submitPermit,
   suspendPermit,
-} from '../src/engine/workflowStateMachine';
-import { checkPermission } from '../src/engine/rbacMatrix';
+} from '../src/engine/workflowStateMachine.js';
+import { checkPermission } from '../src/engine/rbacMatrix.js';
 import {
   AREAS,
   EQUIPMENT,
   PLATFORMS,
   getPermitTypeMeta,
-} from '../src/data/catalog';
-import { TERMINAL_STATUSES } from '../src/types/domain';
+} from '../src/data/catalog.js';
+import { TERMINAL_STATUSES } from '../src/types/domain.js';
 import type {
   AppNotification,
   GasParameter,
@@ -45,7 +45,7 @@ import type {
   SimopsConflict,
   StatusHistoryEntry,
   UserAccount,
-} from '../src/types/domain';
+} from '../src/types/domain.js';
 
 type AnyRequest = any;
 type AnyResponse = any;
@@ -55,9 +55,25 @@ const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const MAX_LOGIN_FAILURES = 5;
 const LOGIN_LOCK_MS = 15 * 60 * 1000;
 
+function configurationError(detail: string): never {
+  const error = new Error('Cấu hình backend chưa đầy đủ.');
+  (error as any).status = 503;
+  (error as any).code = 'PTW_CONFIG_ERROR';
+  (error as any).detail = detail;
+  throw error;
+}
+
+function upstreamUnavailableError(detail: string): never {
+  const error = new Error('Dịch vụ backend/database hiện không khả dụng.');
+  (error as any).status = 503;
+  (error as any).code = 'PTW_UPSTREAM_ERROR';
+  (error as any).detail = detail;
+  throw error;
+}
+
 function requiredEnv(name: string): string {
   const value = process.env[name];
-  if (!value) throw new Error('Missing required server environment variable: ' + name);
+  if (!value) configurationError('Thiếu biến môi trường máy chủ: ' + name);
   return value;
 }
 
@@ -71,18 +87,50 @@ const PLACEHOLDER_SECRET_VALUES = new Set([
 function requiredSecret(name: string, minLength = 32): string {
   const value = requiredEnv(name);
   if (PLACEHOLDER_SECRET_VALUES.has(value) || value.length < minLength) {
-    throw new Error(
-      'Environment variable ' + name + ' is missing, a template placeholder, or too short (' +
-      'min ' + minLength + ' chars). Generate and set a real random secret before deploying.'
+    configurationError(
+      'Biến môi trường ' + name + ' chưa được cấu hình bằng một giá trị bí mật hợp lệ.'
     );
   }
   return value;
 }
 
-const SUPABASE_URL = requiredEnv('SUPABASE_URL').replace(/\/+$/, '');
-const SUPABASE_SERVICE_ROLE_KEY = requiredSecret('SUPABASE_SERVICE_ROLE_KEY', 20);
-const PTW_SESSION_SECRET = requiredSecret('PTW_SESSION_SECRET');
-const PTW_AUDIT_SECRET = requiredSecret('PTW_AUDIT_SECRET');
+interface ServerConfig {
+  supabaseUrl: string;
+  supabaseServiceRoleKey: string;
+  ptwSessionSecret: string;
+}
+
+/**
+ * Resolve configuration on first use instead of during module import.
+ * Vercel can then catch configuration failures in the request handler and
+ * return the normal JSON error shape instead of terminating the function
+ * before the request handler runs.
+ */
+function getServerConfig(): ServerConfig {
+  const supabaseUrl = requiredEnv('SUPABASE_URL');
+  let parsed: URL;
+  try {
+    parsed = new URL(supabaseUrl);
+  } catch {
+    configurationError('SUPABASE_URL phải là URL HTTP hoặc HTTPS hợp lệ.');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    configurationError('SUPABASE_URL phải là URL HTTP hoặc HTTPS hợp lệ.');
+  }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    configurationError('SUPABASE_URL không được chứa username, password, query hoặc fragment.');
+  }
+
+  return {
+    supabaseUrl: supabaseUrl.replace(/\/+$/, ''),
+    supabaseServiceRoleKey: requiredSecret('SUPABASE_SERVICE_ROLE_KEY', 20),
+    ptwSessionSecret: requiredSecret('PTW_SESSION_SECRET'),
+  };
+}
+
+function getAuditSecret(): string {
+  return requiredSecret('PTW_AUDIT_SECRET');
+}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -176,7 +224,7 @@ function signSession(userId: string, sessionVersion: number): string {
     sv: sessionVersion,
     exp: Date.now() + SESSION_TTL_MS,
   });
-  const sig = createHmac('sha256', PTW_SESSION_SECRET).update(payload).digest('base64url');
+  const sig = createHmac('sha256', getServerConfig().ptwSessionSecret).update(payload).digest('base64url');
   return payload + '.' + sig;
 }
 
@@ -184,7 +232,7 @@ function verifySessionToken(token: string): { uid: string; sv: number; exp: numb
   const pieces = token.split('.');
   if (pieces.length !== 2) return null;
   const payload = pieces[0];
-  const expectedSig = createHmac('sha256', PTW_SESSION_SECRET).update(payload).digest('base64url');
+  const expectedSig = createHmac('sha256', getServerConfig().ptwSessionSecret).update(payload).digest('base64url');
   const left = Buffer.from(pieces[1]);
   const right = Buffer.from(expectedSig);
   if (left.length !== right.length || !timingSafeEqual(left, right)) return null;
@@ -233,16 +281,43 @@ function deviceIpFor(req: AnyRequest): string {
 }
 
 async function supabase(path: string, init: RequestInit = {}): Promise<any> {
+  const { supabaseUrl, supabaseServiceRoleKey } = getServerConfig();
   const headers = new Headers(init.headers);
-  headers.set('apikey', SUPABASE_SERVICE_ROLE_KEY);
-  headers.set('Authorization', 'Bearer ' + SUPABASE_SERVICE_ROLE_KEY);
+  headers.set('apikey', supabaseServiceRoleKey);
+  headers.set('Authorization', 'Bearer ' + supabaseServiceRoleKey);
   headers.set('Content-Type', 'application/json');
   if (!headers.has('Prefer')) headers.set('Prefer', 'return=representation');
-  const response = await fetch(SUPABASE_URL + '/rest/v1/' + path, {
-    ...init,
-    headers,
-  });
-  const text = await response.text();
+
+  const separator = path.indexOf('?');
+  const resourcePath = separator >= 0 ? path.slice(0, separator) : path;
+  const resourceQuery = separator >= 0 ? path.slice(separator + 1) : '';
+  const endpoint = new URL(
+    '/rest/v1/' + resourcePath.replace(/^\/+/, ''),
+    supabaseUrl + '/'
+  );
+  endpoint.search = resourceQuery;
+
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      ...init,
+      headers,
+    });
+  } catch (error) {
+    upstreamUnavailableError(
+      error instanceof Error ? error.message : 'Không thể kết nối tới Supabase.'
+    );
+  }
+
+  let text: string;
+  try {
+    text = await response.text();
+  } catch (error) {
+    upstreamUnavailableError(
+      error instanceof Error ? error.message : 'Không thể đọc phản hồi từ Supabase.'
+    );
+  }
+
   let body: any = null;
   if (text) {
     try {
@@ -252,7 +327,13 @@ async function supabase(path: string, init: RequestInit = {}): Promise<any> {
     }
   }
   if (!response.ok) {
-    const message = typeof body === 'object' && body?.message ? body.message : String(body ?? response.statusText);
+    if (response.status >= 500) {
+      upstreamUnavailableError('Supabase trả về lỗi máy chủ HTTP ' + response.status + '.');
+    }
+    const message =
+      typeof body === 'object' && body?.message
+        ? body.message
+        : String(body ?? response.statusText);
     const error = new Error(message);
     (error as any).status = response.status;
     throw error;
@@ -441,7 +522,9 @@ async function ensureBootstrapUser(): Promise<void> {
   const fullName = process.env.BOOTSTRAP_OIM_FULL_NAME ?? '';
   const platformCode = process.env.BOOTSTRAP_OIM_PLATFORM_CODE ?? '';
   if (!username || !validPin(pin) || KNOWN_SAMPLE_BOOTSTRAP_PINS.has(pin) || !fullName || !platformCode) {
-    throw new Error('No users exist. Configure the bootstrap OIM environment variables on the server.');
+    configurationError(
+      'Thiếu hoặc không hợp lệ các biến môi trường BOOTSTRAP_OIM_USERNAME, BOOTSTRAP_OIM_PIN, BOOTSTRAP_OIM_FULL_NAME hoặc BOOTSTRAP_OIM_PLATFORM_CODE.'
+    );
   }
 
   try {
@@ -611,10 +694,16 @@ function errorStatus(error: unknown): number {
 
 function sendError(res: AnyResponse, error: unknown): void {
   const status = errorStatus(error);
-  sendJson(res, status, {
-    ok: false,
-    error: status === 500 ? 'Lỗi máy chủ – kiểm tra cấu hình backend/database.' : String((error as any)?.message ?? 'Yêu cầu thất bại.'),
-  });
+  const code = String((error as any)?.code ?? '');
+  const message =
+    code === 'PTW_CONFIG_ERROR'
+      ? String((error as any)?.detail || 'Backend chưa được cấu hình đầy đủ trên Vercel.')
+      : code === 'PTW_UPSTREAM_ERROR'
+        ? 'Máy chủ PTW không thể kết nối tới backend/database. Kiểm tra Supabase và biến môi trường Vercel.'
+        : status === 500
+          ? 'Lỗi máy chủ – kiểm tra cấu hình backend/database.'
+          : String((error as any)?.message ?? 'Yêu cầu thất bại.');
+  sendJson(res, status, { ok: false, error: message });
 }
 
 function serverAudit(permit: Permit, entry: StatusHistoryEntry): Record<string, unknown> {
@@ -644,7 +733,7 @@ function historyAuditEntries(before: Permit, after: Permit): Record<string, unkn
 }
 
 function signApproval(permit: Permit, actor: any, action: string, decidedAt: string): string {
-  return createHmac('sha256', PTW_AUDIT_SECRET)
+  return createHmac('sha256', getAuditSecret())
     .update(
       permit.id + '|' + permit.permitNumber + '|Rev' + String(permit.revisionNo) +
       '|' + action + '|' + actor.id + '|' + decidedAt
@@ -1678,9 +1767,63 @@ async function handlePost(req: AnyRequest, res: AnyResponse): Promise<void> {
   }
 }
 
-export default async function handler(req: AnyRequest, res: AnyResponse): Promise<void> {
+async function adaptWebRequest(request: Request): Promise<AnyRequest> {
+  const headers: Record<string, string> = {};
+  request.headers.forEach((value: string, key: string) => {
+    headers[key.toLowerCase()] = value;
+  });
+
+  let body: unknown = undefined;
+  if (request.method === 'POST') {
+    try {
+      body = await request.json();
+    } catch {
+      body = {};
+    }
+  }
+
+  return {
+    method: request.method,
+    headers,
+    body,
+  };
+}
+
+function createWebResponse(): {
+  response: AnyResponse;
+  toResponse: () => Response;
+} {
+  let statusCode = 200;
+  let responseBody: string | undefined;
+  const headers = new Headers();
+
+  const response: AnyResponse = {
+    get statusCode() {
+      return statusCode;
+    },
+    set statusCode(value: number) {
+      statusCode = value;
+    },
+    setHeader(name: string, value: string | string[]): void {
+      headers.set(name, Array.isArray(value) ? value.join(', ') : value);
+    },
+    end(body?: string): void {
+      responseBody = body;
+    },
+  };
+
+  return {
+    response,
+    toResponse: () => new Response(responseBody, { status: statusCode, headers }),
+  };
+}
+
+async function handleHttp(req: AnyRequest, res: AnyResponse): Promise<void> {
   try {
     res.setHeader('Cache-Control', 'no-store');
+    if (req.method === 'GET' || req.method === 'POST') {
+      getServerConfig();
+    }
     if (req.method === 'GET') {
       await handleGet(req, res);
       return;
@@ -1699,3 +1842,31 @@ export default async function handler(req: AnyRequest, res: AnyResponse): Promis
     sendError(res, error);
   }
 }
+
+/**
+ * Keep the Vercel Node.js function callable with the traditional (req, res)
+ * signature used by the repository's API tests, while also exposing a Web
+ * Standard fetch handler for runtimes/integrations that use Request/Response.
+ */
+async function handler(req: AnyRequest, res?: AnyResponse): Promise<void | Response> {
+  if (res && typeof res.setHeader === 'function') {
+    await handleHttp(req, res);
+    return;
+  }
+
+  const adaptedRequest = await adaptWebRequest(req as Request);
+  const web = createWebResponse();
+  await handleHttp(adaptedRequest, web.response);
+  return web.toResponse();
+}
+
+const vercelHandler = Object.assign(handler, {
+  fetch: async (request: Request): Promise<Response> => {
+    const adaptedRequest = await adaptWebRequest(request);
+    const web = createWebResponse();
+    await handleHttp(adaptedRequest, web.response);
+    return web.toResponse();
+  },
+});
+
+export default vercelHandler;

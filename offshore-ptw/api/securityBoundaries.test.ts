@@ -210,7 +210,7 @@ describe('server controlled security evidence', () => {
     vi.stubEnv('BOOTSTRAP_OIM_FULL_NAME', 'Bootstrap OIM');
     vi.stubEnv('BOOTSTRAP_OIM_PLATFORM_CODE', 'MT1');
     const response = await post({ operation: 'LOGIN', username: 'bootstrap', pin });
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(503);
     expect(vi.mocked(fetch).mock.calls.some(([input, init]) =>
       String(input).includes('/ptw_users') && init?.method === 'POST')).toBe(false);
   });

@@ -60,7 +60,57 @@ async function getState(userId: string) {
   return JSON.parse(responseBody).state;
 }
 
+async function post(body: Record<string, unknown>) {
+  let responseBody = '';
+  const response = {
+    statusCode: 0,
+    setHeader: () => {},
+    end: (body: string) => { responseBody = body; },
+  };
+  await handler({ method: 'POST', headers: {}, body }, response);
+  return { status: response.statusCode, body: JSON.parse(responseBody) };
+}
+
 describe('public state user data', () => {
+  it('maps Supabase transport failures to a structured 503 response', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('connect ECONNREFUSED');
+    }));
+
+    const response = await post({ operation: 'LOGIN', username: 'applicant', pin: '1234' });
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      ok: false,
+      error: 'Máy chủ PTW không thể kết nối tới backend/database. Kiểm tra Supabase và biến môi trường Vercel.',
+    });
+  });
+
+  it.each([
+    'https://supabase.example.test?mode=test',
+    'https://supabase.example.test#fragment',
+  ])('returns a 503 configuration error for SUPABASE_URL with query/fragment: %s', async (url) => {
+    vi.stubEnv('SUPABASE_URL', url);
+    try {
+      const response = await post({ operation: 'LOGIN', username: 'applicant', pin: '1234' });
+      expect(response.status).toBe(503);
+      expect(response.body).toEqual({ ok: false, error: 'SUPABASE_URL không được chứa username, password, query hoặc fragment.' });
+    } finally {
+      vi.stubEnv('SUPABASE_URL', 'https://supabase.example.test');
+    }
+  });
+
+  it.each(['not a URL', 'ftp://supabase.example.test'])('returns a 503 configuration error for invalid SUPABASE_URL: %s', async (url) => {
+    vi.stubEnv('SUPABASE_URL', url);
+    try {
+      const response = await post({ operation: 'LOGIN', username: 'applicant', pin: '1234' });
+
+      expect(response.status).toBe(503);
+      expect(response.body).toEqual({ ok: false, error: 'SUPABASE_URL phải là URL HTTP hoặc HTTPS hợp lệ.' });
+    } finally {
+      vi.stubEnv('SUPABASE_URL', 'https://supabase.example.test');
+    }
+  });
+
   it('limits a non-manager to their own contact details and certificates on visible permits', async () => {
     const state = await getState('applicant');
     expect(state.users).toEqual([]);

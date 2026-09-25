@@ -10,7 +10,7 @@
  *  - Phê duyệt còn phải thỏa điều kiện workflow (xem authorizationService.ts).
  * ==========================================================================*/
 
-import { AuthorizationResult, PermitAction, Role } from '../types/domain';
+import { AuthorizationResult, PermitAction, Role } from '../types/domain.js';
 
 /** Ma trận vai trò -> tập hành động được phép. */
 export const ROLE_PERMISSION_MATRIX: Readonly<Record<Role, ReadonlySet<PermitAction>>> = {

@@ -15,24 +15,117 @@ export interface RemoteState {
   notifications: AppNotification[];
 }
 
+function connectionError(): Error {
+  const error = new Error('Không thể kết nối đến máy chủ PTW. Kiểm tra triển khai API và kết nối mạng.');
+  (error as { status?: number }).status = 0;
+  return error;
+}
+
+function invalidResponseError(status: number): Error {
+  const error = new Error(`Máy chủ PTW trả về phản hồi không hợp lệ (HTTP ${status}).`);
+  (error as { status?: number }).status = status;
+  return error;
+}
+
+function isPayload(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+const ROLE_VALUES: Role[] = [
+  'OIM',
+  'DEPUTY_OIM',
+  'FPS',
+  'LINE_SUPERVISOR',
+  'PERMIT_APPLICANT',
+  'PERMIT_CONTROLLER',
+  'HSE',
+  'ADMINISTRATOR',
+];
+
+function isUserAccount(value: unknown): value is UserAccount {
+  if (!isPayload(value)) return false;
+  return (
+    typeof value.id === 'string' &&
+    typeof value.username === 'string' &&
+    typeof value.fullName === 'string' &&
+    typeof value.role === 'string' &&
+    ROLE_VALUES.includes(value.role as Role) &&
+    typeof value.platformCode === 'string' &&
+    typeof value.pinHash === 'string' &&
+    typeof value.active === 'boolean' &&
+    typeof value.mustChangePin === 'boolean' &&
+    typeof value.createdAt === 'string' &&
+    typeof value.createdByUserId === 'string' &&
+    (value.organization === undefined || typeof value.organization === 'string') &&
+    (value.certificationNumber === undefined || typeof value.certificationNumber === 'string') &&
+    (value.email === undefined || typeof value.email === 'string') &&
+    (value.phone === undefined || typeof value.phone === 'string') &&
+    (value.lastLoginAt === undefined || typeof value.lastLoginAt === 'string')
+  );
+}
+
 async function request<T>(method: 'GET' | 'POST', body?: Record<string, unknown>): Promise<T> {
-  const response = await fetch('/api/ptw', {
-    method,
-    credentials: 'same-origin',
-    headers: method === 'POST' ? { 'Content-Type': 'application/json' } : undefined,
-    body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || payload.ok === false) {
-    const error = new Error(payload.error ?? 'Yêu cầu máy chủ thất bại.');
+  let response: Response;
+  try {
+    response = await fetch('/api/ptw', {
+      method,
+      credentials: 'same-origin',
+      headers: method === 'POST' ? { 'Content-Type': 'application/json' } : undefined,
+      body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
+    });
+  } catch {
+    throw connectionError();
+  }
+
+  let text: string;
+  try {
+    text = await response.text();
+  } catch {
+    throw connectionError();
+  }
+
+  let payload: unknown;
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      if (response.ok) throw invalidResponseError(response.status);
+    }
+  }
+
+  if (response.ok && !isPayload(payload)) {
+    throw invalidResponseError(response.status);
+  }
+
+  if (!response.ok || (isPayload(payload) && payload.ok === false)) {
+    const fallback =
+      response.status >= 500 || response.status === 404
+        ? 'Máy chủ PTW không phản hồi đúng định dạng. Kiểm tra API /api/ptw và biến môi trường Vercel.'
+        : 'Yêu cầu máy chủ thất bại.';
+    const error = new Error(isPayload(payload) && typeof payload.error === 'string' ? payload.error : fallback);
     (error as { status?: number }).status = response.status;
     throw error;
   }
+
+  if (!isPayload(payload)) throw invalidResponseError(response.status);
+
   return payload as T;
 }
 
 export async function getState(): Promise<RemoteState> {
   const result = await request<{ state: RemoteState }>('GET');
+  if (
+    !isPayload(result) ||
+    !isPayload(result.state) ||
+    !Array.isArray(result.state.permits) ||
+    !Array.isArray(result.state.users) ||
+    !isPayload(result.state.approverCertifications) ||
+    !('currentUser' in result.state) ||
+    !Array.isArray(result.state.notifications) ||
+    !(result.state.currentUser === null || isUserAccount(result.state.currentUser))
+  ) {
+    throw invalidResponseError(200);
+  }
   return result.state;
 }
 
