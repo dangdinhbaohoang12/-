@@ -72,6 +72,19 @@ async function post(body: Record<string, unknown>) {
 }
 
 describe('public state user data', () => {
+  it('maps Supabase transport failures to a structured 503 response', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('connect ECONNREFUSED');
+    }));
+
+    const response = await post({ operation: 'LOGIN', username: 'applicant', pin: '1234' });
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      ok: false,
+      error: 'Máy chủ PTW không thể kết nối tới backend/database. Kiểm tra Supabase và biến môi trường Vercel.',
+    });
+  });
+
   it.each(['not a URL', 'ftp://supabase.example.test'])('returns a 503 configuration error for invalid SUPABASE_URL: %s', async (url) => {
     vi.stubEnv('SUPABASE_URL', url);
     try {

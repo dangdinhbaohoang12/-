@@ -37,6 +37,29 @@ describe('PTW API responses', () => {
     },
   );
 
+  it('preserves structured errors from unsuccessful responses', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(
+      { ok: false, error: 'Backend chưa được cấu hình đầy đủ trên Vercel.' },
+      { status: 503 },
+    )));
+
+    await expect(getState()).rejects.toMatchObject({
+      message: 'Backend chưa được cấu hình đầy đủ trên Vercel.',
+      status: 503,
+    });
+  });
+
+  it('uses the status fallback for a non-JSON unsuccessful response', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => (
+      new Response('<html>unavailable</html>', { status: 503 })
+    )));
+
+    await expect(getState()).rejects.toMatchObject({
+      message: 'Máy chủ PTW không phản hồi đúng định dạng. Kiểm tra API /api/ptw và biến môi trường Vercel.',
+      status: 503,
+    });
+  });
+
   it('maps response body read failures to the connection error', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,

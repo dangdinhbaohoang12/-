@@ -60,7 +60,9 @@ async function request<T>(method: 'GET' | 'POST', body?: Record<string, unknown>
     }
   }
 
-  if (payload === null) throw invalidResponseError(response.status);
+  if (response.ok && !isPayload(payload)) {
+    throw invalidResponseError(response.status);
+  }
 
   if (!response.ok || (isPayload(payload) && payload.ok === false)) {
     const fallback =

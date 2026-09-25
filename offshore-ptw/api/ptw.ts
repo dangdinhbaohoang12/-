@@ -63,6 +63,14 @@ function configurationError(detail: string): never {
   throw error;
 }
 
+function upstreamUnavailableError(detail: string): never {
+  const error = new Error('Dịch vụ backend/database hiện không khả dụng.');
+  (error as any).status = 503;
+  (error as any).code = 'PTW_UPSTREAM_ERROR';
+  (error as any).detail = detail;
+  throw error;
+}
+
 function requiredEnv(name: string): string {
   const value = process.env[name];
   if (!value) configurationError('Thiếu biến môi trường máy chủ: ' + name);
@@ -274,11 +282,28 @@ async function supabase(path: string, init: RequestInit = {}): Promise<any> {
   headers.set('Authorization', 'Bearer ' + supabaseServiceRoleKey);
   headers.set('Content-Type', 'application/json');
   if (!headers.has('Prefer')) headers.set('Prefer', 'return=representation');
-  const response = await fetch(supabaseUrl + '/rest/v1/' + path, {
-    ...init,
-    headers,
-  });
-  const text = await response.text();
+
+  let response: Response;
+  try {
+    response = await fetch(supabaseUrl + '/rest/v1/' + path, {
+      ...init,
+      headers,
+    });
+  } catch (error) {
+    upstreamUnavailableError(
+      error instanceof Error ? error.message : 'Không thể kết nối tới Supabase.'
+    );
+  }
+
+  let text: string;
+  try {
+    text = await response.text();
+  } catch (error) {
+    upstreamUnavailableError(
+      error instanceof Error ? error.message : 'Không thể đọc phản hồi từ Supabase.'
+    );
+  }
+
   let body: any = null;
   if (text) {
     try {
@@ -288,7 +313,13 @@ async function supabase(path: string, init: RequestInit = {}): Promise<any> {
     }
   }
   if (!response.ok) {
-    const message = typeof body === 'object' && body?.message ? body.message : String(body ?? response.statusText);
+    if (response.status >= 500) {
+      upstreamUnavailableError('Supabase trả về lỗi máy chủ HTTP ' + response.status + '.');
+    }
+    const message =
+      typeof body === 'object' && body?.message
+        ? body.message
+        : String(body ?? response.statusText);
     const error = new Error(message);
     (error as any).status = response.status;
     throw error;
@@ -477,7 +508,9 @@ async function ensureBootstrapUser(): Promise<void> {
   const fullName = process.env.BOOTSTRAP_OIM_FULL_NAME ?? '';
   const platformCode = process.env.BOOTSTRAP_OIM_PLATFORM_CODE ?? '';
   if (!username || !validPin(pin) || KNOWN_SAMPLE_BOOTSTRAP_PINS.has(pin) || !fullName || !platformCode) {
-    throw new Error('No users exist. Configure the bootstrap OIM environment variables on the server.');
+    configurationError(
+      'Thiếu hoặc không hợp lệ các biến môi trường BOOTSTRAP_OIM_USERNAME, BOOTSTRAP_OIM_PIN, BOOTSTRAP_OIM_FULL_NAME hoặc BOOTSTRAP_OIM_PLATFORM_CODE.'
+    );
   }
 
   try {
@@ -651,9 +684,11 @@ function sendError(res: AnyResponse, error: unknown): void {
   const message =
     code === 'PTW_CONFIG_ERROR'
       ? 'Backend chưa được cấu hình đầy đủ trên Vercel.'
-      : status === 500
-        ? 'Lỗi máy chủ – kiểm tra cấu hình backend/database.'
-        : String((error as any)?.message ?? 'Yêu cầu thất bại.');
+      : code === 'PTW_UPSTREAM_ERROR'
+        ? 'Máy chủ PTW không thể kết nối tới backend/database. Kiểm tra Supabase và biến môi trường Vercel.'
+        : status === 500
+          ? 'Lỗi máy chủ – kiểm tra cấu hình backend/database.'
+          : String((error as any)?.message ?? 'Yêu cầu thất bại.');
   sendJson(res, status, { ok: false, error: message });
 }
 
@@ -1721,6 +1756,9 @@ async function handlePost(req: AnyRequest, res: AnyResponse): Promise<void> {
 export default async function handler(req: AnyRequest, res: AnyResponse): Promise<void> {
   try {
     res.setHeader('Cache-Control', 'no-store');
+    if (req.method === 'GET' || req.method === 'POST') {
+      getServerConfig();
+    }
     if (req.method === 'GET') {
       await handleGet(req, res);
       return;
