@@ -5,7 +5,7 @@
   "type": "module",
   "description": "OFFSHORE PTW – Hệ thống quản lý giấy phép làm việc trên giàn khoan dầu khí (Safety-Critical Permit To Work Management System)",
   "engines": {
-    "node": ">=20"
+    "node": "22.x"
   },
   "scripts": {
     "dev": "vite",
