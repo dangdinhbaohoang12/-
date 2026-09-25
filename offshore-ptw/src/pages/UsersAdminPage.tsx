@@ -6,7 +6,7 @@
  * - Khóa/mở khóa tài khoản + đổi PIN. Mọi thao tác ghi audit toàn hệ thống.
  * ==========================================================================*/
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Role, ROLE_LABELS_VI, User } from '../types/domain';
 import { usePtwStore } from '../store/ptwStore';
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, FieldRow, inputClass, Select } from '../components/ui/primitives';
@@ -31,6 +31,7 @@ export function UsersAdminPage() {
   const [pinTarget, setPinTarget] = useState<User | null>(null);
   const [newPin, setNewPin] = useState('');
   const [creating, setCreating] = useState(false);
+  const creatingRef = useRef(false);
   const [savingPin, setSavingPin] = useState(false);
   const [togglingUserId, setTogglingUserId] = useState<string | null>(null);
 
@@ -49,8 +50,9 @@ export function UsersAdminPage() {
   }
 
   const submit = async () => {
-    if (creating) return;
+    if (creatingRef.current) return;
     setMsg(null);
+    creatingRef.current = true;
     setCreating(true);
     try {
       const res = await createUser(
@@ -61,6 +63,7 @@ export function UsersAdminPage() {
       setMsg({ ok: true, text: `Đã tạo tài khoản ${res.user!.username} (${ROLE_LABELS_VI[res.user!.role]}).` });
       setFullName(''); setUsername(''); setOrg(''); setCert(''); setPin('');
     } finally {
+      creatingRef.current = false;
       setCreating(false);
     }
   };

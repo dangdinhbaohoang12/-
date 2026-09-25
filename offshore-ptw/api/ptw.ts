@@ -380,17 +380,28 @@ function filterVisiblePermits(user: any, permits: Permit[]): Permit[] {
 
 async function publicState(userRow: any | null): Promise<Record<string, unknown>> {
   if (!userRow) {
-    return { permits: [], users: [], currentUser: null, notifications: [] };
+    return { permits: [], users: [], approverCertifications: {}, currentUser: null, notifications: [] };
   }
 
-  const userRows = await getAllUserRows();
-  const users = userRow.role === 'OIM' ? userRows.map(rowUserWithContact) : userRows.map(rowUser);
   const permitRows = await getAllPermitRows();
   const permits = filterVisiblePermits(userRow, permitRows.map(rowPermit));
+  const userRows = await getAllUserRows();
+  const users = checkPermission(userRow.role as Role, 'MANAGE_USERS').allowed
+    ? userRows.map(rowUserWithContact)
+    : [];
+  const signerIds = new Set(permits.flatMap((permit) =>
+    permit.approvalChain
+      .filter((step) => step.status === 'DONE' && step.decidedByUserId)
+      .map((step) => step.decidedByUserId)
+  ));
+  const approverCertifications = Object.fromEntries(userRows
+    .filter((row) => signerIds.has(row.id) && row.certification_number)
+    .map((row) => [row.id, row.certification_number]));
   const notifications = (await getNotificationRows(userRow.id)).map(rowNotification);
   return {
     permits,
     users,
+    approverCertifications,
     currentUser: rowUserWithContact(userRow),
     notifications,
   };
@@ -1540,7 +1551,7 @@ async function handleGet(req: AnyRequest, res: AnyResponse): Promise<void> {
   if (!user) {
     sendJson(res, 200, {
       ok: true,
-      state: { permits: [], users: [], currentUser: null, notifications: [] },
+      state: { permits: [], users: [], approverCertifications: {}, currentUser: null, notifications: [] },
     });
     return;
   }

@@ -6,7 +6,7 @@
  * - Cấu phần checklist theo loại permit + cảnh báo SIMOPS thời gian thực.
  * ==========================================================================*/
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PermitTypeCode, RiskLevel, ROLE_LABELS_VI } from '../types/domain';
 import { AREAS, EQUIPMENT_BY_AREA, PERMIT_TYPE_CATALOG_MAP, PLATFORMS } from '../data/catalog';
@@ -44,6 +44,7 @@ export function PermitFormPage() {
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
 
   if (!currentUser) return null;
   const catalog = PERMIT_TYPE_CATALOG_MAP[permitType];
@@ -64,7 +65,7 @@ export function PermitFormPage() {
   }, [start, end, areaCode, platform, permits, nextNumber]);
 
   const submit = async () => {
-    if (submitting) return;
+    if (submittingRef.current) return;
     setError(null);
     if (!description.trim() || description.trim().length < 20) { setError('Nội dung công việc tối thiểu 20 ký tự.'); return; }
     if (!reason.trim()) { setError('Lý do phát sinh công việc là bắt buộc.'); return; }
@@ -73,6 +74,7 @@ export function PermitFormPage() {
     if (unchecked.length > 0) { setError(`Còn ${unchecked.length} cấu phần an toàn BẮT BUỘC chưa xác nhận.`); return; }
     if (!pin.trim()) { setError('PIN điện tử xác thực người khởi tạo là bắt buộc.'); return; }
     const currentArea = areas.find((a) => a.code === areaCode);
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       const res = await createDraft(
@@ -93,6 +95,7 @@ export function PermitFormPage() {
       if (!res.ok) { setError(res.error ?? 'Không tạo được draft.'); return; }
       navigate(`/permits/${res.permit!.id}`);
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };

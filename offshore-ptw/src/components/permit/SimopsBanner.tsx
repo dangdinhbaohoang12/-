@@ -6,7 +6,7 @@
  * định thì Applicant mới được Submit permit.
  * ==========================================================================*/
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Permit, SimopsConflict } from '../../types/domain';
 import { usePtwStore } from '../../store/ptwStore';
 import { Badge, Button, FieldRow, inputClass, Modal } from '../ui/primitives';
@@ -26,6 +26,7 @@ export function SimopsBanner({ permit, conflicts }: { permit: Permit; conflicts:
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
 
   if (conflicts.length === 0) {
     return (
@@ -38,9 +39,10 @@ export function SimopsBanner({ permit, conflicts }: { permit: Permit; conflicts:
   const canAck = !!currentUser && ['FPS', 'DEPUTY_OIM', 'OIM'].includes(currentUser.role);
 
   const submitAck = async () => {
-    if (submitting || !target) return;
+    if (submittingRef.current || !target) return;
     setError(null);
     const conflictId = target.conflictId;
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       const res = await acknowledge(permit.id, conflictId, note.trim(), pin);
@@ -51,6 +53,7 @@ export function SimopsBanner({ permit, conflicts }: { permit: Permit; conflicts:
       if (!res.ok) { setError(res.error ?? 'Không ghi nhận được.'); return; }
       setTarget(null); setNote(''); setPin('');
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };

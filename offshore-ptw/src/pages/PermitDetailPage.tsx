@@ -54,7 +54,7 @@ export function PermitDetailPage() {
   const permits = usePtwStore((s) => s.permits);
   const currentUser = usePtwStore((s) => s.currentUser);
   const simulatedRole = usePtwStore((s) => s.simulatedRole);
-  const users = usePtwStore((s) => s.users);
+  const approverCertifications = usePtwStore((s) => s.approverCertifications);
   const perform = usePtwStore((s) => s.perform);
   const [signoff, setSignoff] = useState<PendingAction | null>(null);
 
@@ -109,7 +109,6 @@ export function PermitDetailPage() {
   const conflicts = detectSimopsConflicts(permit, permits);
   const mins = minutesUntil(permit.validUntil ?? permit.plannedEnd);
   const locked = !['DRAFT', 'RETURNED'].includes(permit.status);
-  const approverOf = (userId?: string) => users.find((u) => u.id === userId);
 
   const runAction = async (pin: string, comment: string): Promise<{ ok: boolean; error?: string }> => {
     const active = signoff;
@@ -217,10 +216,10 @@ export function PermitDetailPage() {
           <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Chữ ký số trong bản này</p>
           <div className="grid gap-2 md:grid-cols-2">
             {permit.approvalChain.filter((s) => s.status === 'DONE').map((s) => {
-              const u = approverOf(s.decidedByUserId);
+              const certificationNumber = s.decidedByUserId ? approverCertifications[s.decidedByUserId] : undefined;
               return (
                 <div key={s.level} className="rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2 font-mono text-[11px]">
-                  <span className="font-bold text-emerald-400">✅ {s.level}</span> — {s.decidedByName} ({u?.certificationNumber ?? 'N/A'})
+                  <span className="font-bold text-emerald-400">✅ {s.level}</span> — {s.decidedByName} ({certificationNumber ?? 'N/A'})
                   <span className="block text-muted-foreground">{formatTimestamp(s.decidedAt)} · SIG:{s.signatureHash}</span>
                 </div>
               );

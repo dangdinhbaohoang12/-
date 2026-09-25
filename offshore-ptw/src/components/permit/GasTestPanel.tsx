@@ -8,7 +8,7 @@
  *   phép đo chỉ có giá trị phát hành trong 60 phút.
  * ==========================================================================*/
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { GasParameter, GasTestRecord, Permit } from '../../types/domain';
 import { GAS_SPECS, REQUIRED_GAS_PARAMETERS, evaluateReading, isDetectorCalibrationValid } from '../../engine/gasTestEngine';
 import { usePtwStore } from '../../store/ptwStore';
@@ -41,6 +41,7 @@ export function GasTestPanel({ permit }: { permit: Permit }) {
   const [notes, setNotes] = useState('');
   const [readings, setReadings] = useState<DraftReadings>({ O2: '', LEL: '', H2S: '', CO: '' });
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
 
   const canAdd = useMemo(
     () => (currentUser ? canPerform(currentUser, permit, 'ADD_GAS_TEST').allowed : false),
@@ -51,7 +52,7 @@ export function GasTestPanel({ permit }: { permit: Permit }) {
   const draftAllPass = PARAMS.every((p) => liveResult(p, readings[p]) === 'PASS');
 
   const submit = async () => {
-    if (submitting) return;
+    if (submittingRef.current) return;
     setError(null);
     if (!currentUser) return;
     if (!detectorId.trim() || !calDue || !location.trim()) {
@@ -64,6 +65,7 @@ export function GasTestPanel({ permit }: { permit: Permit }) {
       setError('Máy dò đã hết hạn hiệu chuẩn – phép đo không có giá trị pháp lý.');
       return;
     }
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       const res = await addGasTest(
@@ -92,6 +94,7 @@ export function GasTestPanel({ permit }: { permit: Permit }) {
       setReadings({ O2: '', LEL: '', H2S: '', CO: '' });
       setOpen(false);
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };

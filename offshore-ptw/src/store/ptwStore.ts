@@ -24,6 +24,7 @@ export type { Action, ActionResult };
 interface PtwState {
   permits: Permit[];
   users: UserAccount[];
+  approverCertifications: Record<string, string>;
   currentUser: UserAccount | null;
   notifications: AppNotification[];
   selectedPermitId: string | null;
@@ -122,6 +123,7 @@ function applyState(
   state: {
     permits: Permit[];
     users: UserAccount[];
+    approverCertifications: Record<string, string>;
     currentUser: UserAccount | null;
     notifications: AppNotification[];
   },
@@ -130,6 +132,7 @@ function applyState(
   set({
     permits: state.permits,
     users: state.users,
+    approverCertifications: state.approverCertifications,
     currentUser: state.currentUser,
     notifications: state.notifications,
   });
@@ -138,6 +141,7 @@ function applyState(
 export const usePtwStore = create<PtwState>((set, get) => ({
   permits: [],
   users: [],
+  approverCertifications: {},
   currentUser: null,
   notifications: [],
   selectedPermitId: null,
@@ -169,6 +173,7 @@ export const usePtwStore = create<PtwState>((set, get) => ({
         state: {
           permits: Permit[];
           users: UserAccount[];
+          approverCertifications: Record<string, string>;
           currentUser: UserAccount;
           notifications: AppNotification[];
         };
@@ -205,6 +210,7 @@ export const usePtwStore = create<PtwState>((set, get) => ({
       currentUser: null,
       permits: [],
       users: [],
+      approverCertifications: {},
       notifications: [],
       selectedPermitId: null,
       simulatedRole: null,
@@ -383,6 +389,7 @@ export const usePtwStore = create<PtwState>((set, get) => ({
           currentUser: null,
           permits: [],
           users: [],
+          approverCertifications: {},
           notifications: [],
           selectedPermitId: null,
           simulatedRole: null,

@@ -10,6 +10,7 @@ export type Action =
 export interface RemoteState {
   permits: Permit[];
   users: UserAccount[];
+  approverCertifications: Record<string, string>;
   currentUser: UserAccount | null;
   notifications: AppNotification[];
 }
