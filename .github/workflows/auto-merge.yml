@@ -304,7 +304,7 @@ jobs:
 
             async function waitForAllCIToSettle(headSha) {
               const deadline = Date.now() + maxCiWaitSeconds * 1000;
-              let sawSignal = false;
+              let sawCi = false;
 
               while (Date.now() < deadline) {
                 const [workflowRuns, checkRuns, combinedStatus] = await Promise.all([
@@ -313,35 +313,44 @@ jobs:
                   getCombinedStatuses(headSha)
                 ]);
 
-                const relevantWorkflowRuns = workflowRuns.filter(run => run.id !== context.runId);
-                const pendingWorkflowRuns = relevantWorkflowRuns.filter(run => run.status !== 'completed');
+                // Only repository-owned CI is a merge gate. Third-party AI/security
+                // integrations are handled separately and must not make this loop
+                // wait forever when they are pending or unavailable.
+                const requiredWorkflowRuns = workflowRuns.filter(run =>
+                  run.name === 'CI - Build & Test (Offshore PTW)'
+                );
+                const requiredCheckRuns = checkRuns.filter(run =>
+                  run.name === 'CI - Build & Test (Offshore PTW)' ||
+                  run.name === 'Typecheck / Test / Build'
+                );
 
-                const nonActionsCheckRuns = checkRuns.filter(run => run.app?.slug !== 'github-actions');
-                const pendingExternalChecks = nonActionsCheckRuns.filter(run => run.status !== 'completed');
-
-                if (relevantWorkflowRuns.length > 0 || checkRuns.length > 0 || (combinedStatus.contexts || []).length > 0) {
-                  sawSignal = true;
+                if (requiredWorkflowRuns.length > 0 || requiredCheckRuns.length > 0) {
+                  sawCi = true;
                 }
 
-                const commitStatusPending = combinedStatus.state === 'pending';
+                const pendingWorkflows = requiredWorkflowRuns.filter(run => run.status !== 'completed');
+                const pendingChecks = requiredCheckRuns.filter(run => run.status !== 'completed');
 
-                if (sawSignal && pendingWorkflowRuns.length === 0 && pendingExternalChecks.length === 0 && !commitStatusPending) {
-                  return { workflowRuns: relevantWorkflowRuns, checkRuns, combinedStatus };
+                if (sawCi && pendingWorkflows.length === 0 && pendingChecks.length === 0) {
+                  return {
+                    workflowRuns: requiredWorkflowRuns,
+                    checkRuns: requiredCheckRuns,
+                    combinedStatus
+                  };
                 }
 
                 const pendingNames = [
-                  ...pendingWorkflowRuns.map(r => `workflow:${r.name}`),
-                  ...pendingExternalChecks.map(r => `check:${r.name}`),
-                  ...(commitStatusPending ? ['commit-status:pending'] : [])
-                ].slice(0, 12);
+                  ...pendingWorkflows.map(r => `workflow:${r.name}`),
+                  ...pendingChecks.map(r => `check:${r.name}`)
+                ];
 
                 core.info(
-                  `Waiting for CI to settle. Pending: ${pendingNames.join(', ') || 'checks are still being created'}`
+                  `Waiting for project CI to settle. Pending: ${pendingNames.join(', ') || 'CI has not reported yet'}`
                 );
                 await sleep(10000);
               }
 
-              throw new Error(`CI did not settle within ${maxCiWaitSeconds} seconds.`);
+              throw new Error(`Project CI did not settle within ${maxCiWaitSeconds} seconds.`);
             }
 
             async function fetchJobLog(jobId) {
@@ -561,10 +570,17 @@ jobs:
               return run.status === 'completed' && blockingConclusions.has(run.conclusion);
             });
             const failedExternalChecks = checkRuns.filter(run => {
-              return run.app?.slug !== 'github-actions' && run.status === 'completed' && !allowedSuccessfulConclusions.has(run.conclusion);
+              const required =
+                run.name === 'CI - Build & Test (Offshore PTW)' ||
+                run.name === 'Typecheck / Test / Build';
+              return required && run.status === 'completed' && !allowedSuccessfulConclusions.has(run.conclusion);
             });
             const failedCommitStatuses = (combinedStatus.contexts || []).filter(status => {
-              return status.state !== 'success';
+              const contextName = String(status.context || '');
+              const required =
+                contextName === 'CI - Build & Test (Offshore PTW)' ||
+                contextName === 'Typecheck / Test / Build';
+              return required && status.state !== 'success';
             });
 
             const ciFailed = failedWorkflowRuns.length > 0 || failedExternalChecks.length > 0 || failedCommitStatuses.length > 0;
