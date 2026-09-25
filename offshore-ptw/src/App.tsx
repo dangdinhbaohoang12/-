@@ -3,6 +3,7 @@
  * APP ROOT – Protected router của hệ thống OFFSHORE PTW
  * ==========================================================================*/
 
+import { useEffect } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { usePtwStore } from './store/ptwStore';
 import { AppLayout } from './components/layout/AppLayout';
@@ -15,6 +16,8 @@ import { UsersAdminPage } from './pages/UsersAdminPage';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const currentUser = usePtwStore((s) => s.currentUser);
+  const authReady = usePtwStore((s) => s.authReady);
+  if (!authReady) return <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">Đang xác thực phiên…</div>;
   if (!currentUser) return <Navigate to="/login" replace />;
   return <>{children}</>;
 }
@@ -27,6 +30,9 @@ function RequireOim({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  const hydrate = usePtwStore((s) => s.hydrate);
+  useEffect(() => { void hydrate(); }, [hydrate]);
+
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />

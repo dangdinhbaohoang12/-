@@ -414,6 +414,8 @@ export interface Permit {
   approvalChain: ApprovalStep[];
 
   requiresGasTest: boolean;
+  /** Xác nhận checklist an toàn bắt buộc theo loại permit – re-validated on every save. */
+  safetyChecklistConfirmed?: Array<{ itemId: string; confirmed: boolean }>;
   gasTests: GasTestRecord[];
   riskAssessments: RiskAssessmentRef[];
   lotoRecords: LotoRef[];

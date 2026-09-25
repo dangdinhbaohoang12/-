@@ -8,7 +8,7 @@
  *   SUSPENDED/REJECTED/EXPIRED = Crimson.
  * ==========================================================================*/
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { ROLE_LABELS_VI, STATUS_LABELS_EN, Permit, PermitStatus } from '../types/domain';
@@ -40,14 +40,11 @@ export function DashboardPage() {
   const currentUser = usePtwStore((s) => s.currentUser);
   const simulatedRole = usePtwStore((s) => s.simulatedRole);
   const permits = usePtwStore((s) => s.permits);
-  const refreshExpiries = usePtwStore((s) => s.refreshExpiries);
   const [query, setQuery] = useState('');
 
-  useEffect(() => {
-    refreshExpiries();
-    const t = setInterval(() => refreshExpiries(), 30000);
-    return () => clearInterval(t);
-  }, [refreshExpiries]);
+  // Expiry polling is owned by AppLayout (which always wraps this page via
+  // its <Outlet>); a second interval here would double the server-side
+  // expiry scan rate for no benefit.
 
   const visible = useMemo(() => {
     if (!currentUser) return [];

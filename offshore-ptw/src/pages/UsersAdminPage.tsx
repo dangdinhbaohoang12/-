@@ -6,7 +6,7 @@
  * - Khóa/mở khóa tài khoản + đổi PIN. Mọi thao tác ghi audit toàn hệ thống.
  * ==========================================================================*/
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Role, ROLE_LABELS_VI, User } from '../types/domain';
 import { usePtwStore } from '../store/ptwStore';
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, FieldRow, inputClass, Select } from '../components/ui/primitives';
@@ -30,6 +30,11 @@ export function UsersAdminPage() {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [pinTarget, setPinTarget] = useState<User | null>(null);
   const [newPin, setNewPin] = useState('');
+  const [pinError, setPinError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const creatingRef = useRef(false);
+  const [savingPin, setSavingPin] = useState(false);
+  const [togglingUserId, setTogglingUserId] = useState<string | null>(null);
 
   const ordered = useMemo(() => [...users].sort((a, b) => a.role.localeCompare(b.role) || a.fullName.localeCompare(b.fullName)), [users]);
 
@@ -45,27 +50,51 @@ export function UsersAdminPage() {
     );
   }
 
-  const submit = () => {
+  const submit = async () => {
+    if (creatingRef.current) return;
     setMsg(null);
-    const res = createUser(
-      { fullName: fullName.trim(), username: username.trim().toLowerCase(), role, platformCode: currentUser.platformCode, organization: org.trim(), certificationNumber: cert.trim(), initialPin: pin },
-      operatorPin
-    );
-    if (!res.ok) { setMsg({ ok: false, text: res.error ?? 'Tạo tài khoản thất bại.' }); return; }
-    setMsg({ ok: true, text: `Đã tạo tài khoản ${res.user!.username} (${ROLE_LABELS_VI[res.user!.role]}).` });
-    setFullName(''); setUsername(''); setOrg(''); setCert(''); setPin('');
+    creatingRef.current = true;
+    setCreating(true);
+    try {
+      const res = await createUser(
+        { fullName: fullName.trim(), username: username.trim().toLowerCase(), role, platformCode: currentUser.platformCode, organization: org.trim(), certificationNumber: cert.trim(), initialPin: pin },
+        operatorPin
+      );
+      if (!res.ok) { setMsg({ ok: false, text: res.error ?? 'Tạo tài khoản thất bại.' }); return; }
+      setMsg({ ok: true, text: `Đã tạo tài khoản ${res.user!.username} (${ROLE_LABELS_VI[res.user!.role]}).` });
+      setFullName(''); setUsername(''); setOrg(''); setCert(''); setPin('');
+    } finally {
+      creatingRef.current = false;
+      setCreating(false);
+    }
   };
 
-  const savePin = () => {
-    if (!pinTarget) return;
-    const res = changePin(pinTarget.id, newPin, operatorPin);
-    setMsg(res.ok ? { ok: true, text: `Đã cập nhật PIN cho ${pinTarget.username}.` } : { ok: false, text: res.error ?? 'Lỗi.' });
-    setPinTarget(null); setNewPin('');
+  const savePin = async () => {
+    if (!pinTarget || savingPin) return;
+    // Capture the target being submitted so cleanup only touches this
+    // request's modal – not a different one the operator opened afterwards.
+    const target = pinTarget;
+    setPinError(null);
+    setSavingPin(true);
+    try {
+      const res = await changePin(target.id, newPin, operatorPin);
+      if (!res.ok) { setPinError(res.error ?? 'Lỗi.'); return; }
+      setMsg({ ok: true, text: `Đã cập nhật PIN cho ${target.username}.` });
+      setPinTarget((current) => current?.id === target.id ? null : current);
+    } finally {
+      setSavingPin(false);
+    }
   };
 
-  const toggleActive = (u: User) => {
-    const res = toggleUserActive(u.id, !u.active, operatorPin);
-    setMsg(res.ok ? { ok: true, text: `Đã ${u.active ? 'khóa' : 'mở khóa'} tài khoản ${u.username}.` } : { ok: false, text: res.error ?? 'Lỗi.' });
+  const toggleActive = async (u: User) => {
+    if (togglingUserId) return;
+    setTogglingUserId(u.id);
+    try {
+      const res = await toggleUserActive(u.id, !u.active, operatorPin);
+      setMsg(res.ok ? { ok: true, text: `Đã ${u.active ? 'khóa' : 'mở khóa'} tài khoản ${u.username}.` } : { ok: false, text: res.error ?? 'Lỗi.' });
+    } finally {
+      setTogglingUserId(null);
+    }
   };
 
   return (
@@ -89,7 +118,7 @@ export function UsersAdminPage() {
             <FieldRow label="PIN khởi tạo (4–8 chữ số)" hint="Người dùng tự đổi sau lần đăng nhập đầu"><input type="password" inputMode="numeric" maxLength={8} className={inputClass} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} /></FieldRow>
             <FieldRow label="PIN xác thực của Giàn trưởng (bắt buộc)" hint="Chữ ký điện tử của chính bạn để ủy quyền thao tác"><input type="password" inputMode="numeric" maxLength={8} className={inputClass} value={operatorPin} onChange={(e) => setOperatorPin(e.target.value.replace(/\D/g, ''))} /></FieldRow>
             {msg && <p className={`rounded-lg border px-3 py-2 text-xs ${msg.ok ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' : 'border-rose-500/40 bg-rose-500/10 text-rose-300'}`}>{msg.ok ? '✅' : '⛔'} {msg.text}</p>}
-            <Button variant="success" className="w-full" onClick={submit}>➕ Tạo tài khoản</Button>
+            <Button variant="success" className="w-full" onClick={submit} disabled={creating}>{creating ? 'Đang tạo…' : '➕ Tạo tài khoản'}</Button>
           </CardContent>
         </Card>
 
@@ -111,9 +140,17 @@ export function UsersAdminPage() {
                     <td className="py-2.5 pr-3">{u.active ? <Badge tone="info">Hoạt động</Badge> : <Badge tone="danger">Khóa</Badge>}</td>
                     <td className="py-2.5">
                       <div className="flex gap-1.5">
-                        <Button size="sm" variant="outline" onClick={() => setPinTarget(u)}>Đổi PIN</Button>
-                        <Button size="sm" variant={u.active ? 'danger' : 'success'} disabled={u.id === currentUser.id} onClick={() => toggleActive(u)}>
-                          {u.active ? 'Khóa' : 'Mở khóa'}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => { setPinError(null); setNewPin(''); setPinTarget(u); }}
+                          disabled={savingPin || togglingUserId === u.id || u.id === currentUser.id}
+                          title={u.id === currentUser.id ? 'Không thể cấp lại PIN cho chính tài khoản đang đăng nhập — phiên sẽ bị vô hiệu ngay lập tức. Hãy dùng chức năng tự đổi PIN.' : undefined}
+                        >
+                          Đổi PIN
+                        </Button>
+                        <Button size="sm" variant={u.active ? 'danger' : 'success'} disabled={u.id === currentUser.id || togglingUserId === u.id} onClick={() => toggleActive(u)}>
+                          {togglingUserId === u.id ? 'Đang xử lý…' : u.active ? 'Khóa' : 'Mở khóa'}
                         </Button>
                       </div>
                     </td>
@@ -126,13 +163,14 @@ export function UsersAdminPage() {
       </div>
 
       {pinTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setPinTarget(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => { if (!savingPin) setPinTarget(null); }}>
           <div className="ptw-modal-in w-full max-w-sm rounded-2xl border border-border bg-card p-5" onClick={(e) => e.stopPropagation()}>
             <p className="mb-3 text-sm font-bold">Cấp lại PIN cho @{pinTarget.username}</p>
-            <input type="password" inputMode="numeric" maxLength={8} autoFocus className={inputClass} value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))} placeholder="PIN mới 4–8 chữ số" />
+            <input type="password" inputMode="numeric" maxLength={8} autoFocus className={inputClass} value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))} placeholder="PIN mới 4–8 chữ số" disabled={savingPin} />
+            {pinError && <p role="alert" className="mt-3 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">⛔ {pinError}</p>}
             <div className="mt-3 flex justify-end gap-2">
-              <Button variant="ghost" onClick={() => setPinTarget(null)}>Hủy</Button>
-              <Button variant="primary" onClick={savePin} disabled={newPin.length < 4}>Xác nhận</Button>
+              <Button variant="ghost" onClick={() => setPinTarget(null)} disabled={savingPin}>Hủy</Button>
+              <Button variant="primary" onClick={savePin} disabled={newPin.length < 4 || savingPin}>{savingPin ? 'Đang lưu…' : 'Xác nhận'}</Button>
             </div>
           </div>
         </div>

@@ -7,7 +7,7 @@
  * - QR góc trang · Audit Trail append-only · SIMOPS banner.
  * ==========================================================================*/
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { ApprovalLevel, PermitAction, ROLE_LABELS_VI, STATUS_LABELS_EN, User } from '../types/domain';
@@ -54,9 +54,21 @@ export function PermitDetailPage() {
   const permits = usePtwStore((s) => s.permits);
   const currentUser = usePtwStore((s) => s.currentUser);
   const simulatedRole = usePtwStore((s) => s.simulatedRole);
-  const users = usePtwStore((s) => s.users);
+  const approverCertifications = usePtwStore((s) => s.approverCertifications);
   const perform = usePtwStore((s) => s.perform);
   const [signoff, setSignoff] = useState<PendingAction | null>(null);
+  const signoffRef = useRef<PendingAction | null>(null);
+  const [submittingSignoff, setSubmittingSignoff] = useState(false);
+
+  const openSignoff = (action: PendingAction) => {
+    signoffRef.current = action;
+    setSignoff(action);
+  };
+
+  const closeSignoff = () => {
+    signoffRef.current = null;
+    setSignoff(null);
+  };
 
   const permit = permits.find((p) => p.id === id || p.permitNumber === id);
 
@@ -109,14 +121,14 @@ export function PermitDetailPage() {
   const conflicts = detectSimopsConflicts(permit, permits);
   const mins = minutesUntil(permit.validUntil ?? permit.plannedEnd);
   const locked = !['DRAFT', 'RETURNED'].includes(permit.status);
-  const approverOf = (userId?: string) => users.find((u) => u.id === userId);
 
-  const runAction = (pin: string, comment: string): boolean => {
-    if (!signoff) return false;
-    const res = perform(signoff.action, { id: permit.id }, pin, comment);
-    if (!res.ok) return false;
-    setSignoff(null);
-    return true;
+  const runAction = async (active: PendingAction, pin: string, comment: string): Promise<{ ok: boolean; error?: string; closeModal?: boolean }> => {
+    const res = await perform(active.action, { id: permit.id }, pin, comment);
+    if (!res.ok) return { ok: false, error: res.error };
+    // Only let this request close its own modal. A newer pending action must
+    // stay visible.
+    const closeModal = signoffRef.current === active;
+    return { ok: true, closeModal };
   };
 
   return (
@@ -178,7 +190,7 @@ export function PermitDetailPage() {
         <CardContent className="flex flex-wrap gap-2">
           {actions.length === 0 && <p className="text-xs text-muted-foreground">Tài khoản của bạn không có hành động khả dụng ở trạng thái này (ma trận RBAC).</p>}
           {actions.map((a) => (
-            <Button key={a.action} variant={toButtonVariant(a.tone)} size="sm" onClick={() => setSignoff(a)} disabled={a.tone === 'outline'}>
+            <Button key={a.action} variant={toButtonVariant(a.tone)} size="sm" onClick={() => openSignoff(a)} disabled={a.tone === 'outline' || submittingSignoff}>
               {a.label}{a.tone === 'outline' && ' (demo)'}
             </Button>
           ))}
@@ -214,10 +226,10 @@ export function PermitDetailPage() {
           <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Chữ ký số trong bản này</p>
           <div className="grid gap-2 md:grid-cols-2">
             {permit.approvalChain.filter((s) => s.status === 'DONE').map((s) => {
-              const u = approverOf(s.decidedByUserId);
+              const certificationNumber = s.decidedByUserId ? approverCertifications[s.decidedByUserId] : undefined;
               return (
                 <div key={s.level} className="rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2 font-mono text-[11px]">
-                  <span className="font-bold text-emerald-400">✅ {s.level}</span> — {s.decidedByName} ({u?.certificationNumber ?? 'N/A'})
+                  <span className="font-bold text-emerald-400">✅ {s.level}</span> — {s.decidedByName} ({certificationNumber ?? 'N/A'})
                   <span className="block text-muted-foreground">{formatTimestamp(s.decidedAt)} · SIG:{s.signatureHash}</span>
                 </div>
               );
@@ -230,7 +242,7 @@ export function PermitDetailPage() {
       <AuditTrail entries={permit.statusHistory} />
 
       {/* ============================== SIGN-OFF MODAL ============================ */}
-      <SignoffModal pending={signoff} onClose={() => setSignoff(null)} onConfirm={runAction} permitNumber={permit.permitNumber} />
+      <SignoffModal pending={signoff} onClose={closeSignoff} onConfirm={runAction} onSubmittingChange={setSubmittingSignoff} permitNumber={permit.permitNumber} />
     </div>
   );
 }
@@ -244,43 +256,64 @@ function DetailField({ label, value }: { label: string; value: React.ReactNode }
   );
 }
 
-function SignoffModal({ pending, onClose, onConfirm, permitNumber }: {
+function SignoffModal({ pending, onClose, onConfirm, onSubmittingChange, permitNumber }: {
   pending: PendingAction | null;
   onClose: () => void;
-  onConfirm: (pin: string, comment: string) => boolean;
+  onConfirm: (action: PendingAction, pin: string, comment: string) => Promise<{ ok: boolean; error?: string; closeModal?: boolean }>;
+  onSubmittingChange: (submitting: boolean) => void;
   permitNumber: string;
 }) {
   const currentUser = usePtwStore((s) => s.currentUser);
   const [pin, setPin] = useState('');
   const [comment, setComment] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const needsComment = !!pending && (pending.action === 'REJECT' || pending.action === 'RETURN_FOR_CLARIFICATION' || pending.action === 'SUSPEND' || pending.action === 'CREATE_REVISION');
 
-  const confirm = () => {
+  const confirm = async () => {
+    const active = pending;
+    if (!active || submitting) return;
     setError(null);
     if (needsComment && !comment.trim()) { setError('Hành động này bắt buộc nhập lý do / bình luận.'); return; }
-    const ok = onConfirm(pin, comment.trim());
-    if (!ok) return;
-    setPin(''); setComment('');
+    setSubmitting(true);
+    onSubmittingChange(true);
+    try {
+      const res = await onConfirm(active, pin, comment.trim());
+      if (!res.ok) { setError(res.error ?? 'Ký/ghi nhận thất bại – kiểm tra PIN, quyền hạn hoặc dữ liệu đã bị thay đổi rồi thử lại.'); return; }
+      if (res.closeModal) {
+        setPin(''); setComment('');
+        onClose();
+      }
+    } finally {
+      setSubmitting(false);
+      onSubmittingChange(false);
+    }
+  };
+
+  // While a sign-off request is in flight, block every close path (backdrop,
+  // Escape, ✕ button, Hủy) so the pending action cannot be dismissed and
+  // replaced by another one before it settles.
+  const guardedClose = () => {
+    if (submitting) return;
     onClose();
   };
 
   return (
-    <Modal open={!!pending} onClose={onClose} title={pending?.label ?? ''} subtitle={`${permitNumber} · Xác thực chữ ký điện tử`}>
+    <Modal open={!!pending} onClose={guardedClose} title={pending?.label ?? ''} subtitle={`${permitNumber} · Xác thực chữ ký điện tử`}>
       <div className="space-y-4">
         <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs">
           Người ký: <b>{currentUser?.fullName}</b> · {currentUser ? ROLE_LABELS_VI[currentUser.role] : ''} · Chứng chỉ <span className="font-mono">{currentUser?.certificationNumber}</span>
         </div>
         <FieldRow label="Mã PIN điện tử (bắt buộc)" hint="Chữ ký SHA-256 được tạo từ username + vai trò + timestamp + PIN">
-          <input type="password" autoFocus maxLength={8} inputMode="numeric" className={inputClass} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} />
+          <input type="password" autoFocus maxLength={8} inputMode="numeric" className={inputClass} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} disabled={submitting} />
         </FieldRow>
         <FieldRow label={needsComment ? 'Lý do / bình luận (BẮT BUỘC)' : 'Bình luận (tùy chọn)'}>
-          <textarea rows={3} className={inputClass} value={comment} onChange={(e) => setComment(e.target.value)} />
+          <textarea rows={3} className={inputClass} value={comment} onChange={(e) => setComment(e.target.value)} disabled={submitting} />
         </FieldRow>
         {error && <p className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">⛔ {error}</p>}
         <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>Hủy</Button>
-          <Button variant={pending?.tone === 'danger' || pending?.tone === 'critical' ? 'danger' : 'success'} onClick={confirm} disabled={!pin}>🖊 Ký & xác nhận</Button>
+          <Button variant="ghost" onClick={guardedClose} disabled={submitting}>Hủy</Button>
+          <Button variant={pending?.tone === 'danger' || pending?.tone === 'critical' ? 'danger' : 'success'} onClick={confirm} disabled={!pin || submitting}>{submitting ? 'Đang xử lý…' : '🖊 Ký & xác nhận'}</Button>
         </div>
       </div>
     </Modal>
