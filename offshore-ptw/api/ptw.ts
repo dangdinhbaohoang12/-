@@ -1842,15 +1842,29 @@ async function handleHttp(req: AnyRequest, res: AnyResponse): Promise<void> {
 }
 
 /**
- * Vercel's current Node.js Functions contract uses a Web Standard Request and
- * Response handler. Keep the adapter explicit so the existing business/auth
- * implementation remains unchanged.
+ * Keep the Vercel Node.js function callable with the traditional (req, res)
+ * signature used by the repository's API tests, while also exposing a Web
+ * Standard fetch handler for runtimes/integrations that use Request/Response.
  */
-export default {
-  async fetch(request: Request): Promise<Response> {
+async function handler(req: AnyRequest, res?: AnyResponse): Promise<void | Response> {
+  if (res && typeof res.setHeader === 'function') {
+    await handleHttp(req, res);
+    return;
+  }
+
+  const adaptedRequest = await adaptWebRequest(req as Request);
+  const web = createWebResponse();
+  await handleHttp(adaptedRequest, web.response);
+  return web.toResponse();
+}
+
+const vercelHandler = Object.assign(handler, {
+  fetch: async (request: Request): Promise<Response> => {
     const adaptedRequest = await adaptWebRequest(request);
     const web = createWebResponse();
     await handleHttp(adaptedRequest, web.response);
     return web.toResponse();
   },
-};
+});
+
+export default vercelHandler;
