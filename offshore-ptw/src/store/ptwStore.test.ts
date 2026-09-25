@@ -117,3 +117,37 @@ describe('login after logout', () => {
     expect(usePtwStore.getState().currentUser?.id).toBe('new-user');
   });
 });
+
+describe('state response ordering', () => {
+  it('drops an older mutation response after a newer refresh applies', async () => {
+    let resolveMutation!: (value: unknown) => void;
+    const mutation = new Promise((resolve) => { resolveMutation = resolve; });
+    postMock.mockImplementation((operation: string) => operation === 'UPDATE_DRAFT'
+      ? mutation
+      : Promise.resolve({ state: { permits: [{ id: 'newer' }], users: [],
+        approverCertifications: {}, currentUser: { id: 'operator' }, notifications: [] } }));
+
+    const update = usePtwStore.getState().updateDraftPermit('permit', {}, '1234');
+    await usePtwStore.getState().refreshExpiries();
+    resolveMutation({ state: { permits: [{ id: 'older' }], users: [],
+      approverCertifications: {}, currentUser: { id: 'operator' }, notifications: [] } });
+    await update;
+    expect(usePtwStore.getState().permits[0]?.id).toBe('newer');
+  });
+
+  it('keeps logout clear when a pending response arrives afterward', async () => {
+    let resolveLogin!: (value: unknown) => void;
+    const loginRequest = new Promise((resolve) => { resolveLogin = resolve; });
+    postMock.mockImplementation((operation: string) =>
+      operation === 'LOGIN' ? loginRequest : Promise.resolve({ ok: true })
+    );
+
+    const login = usePtwStore.getState().login('operator', '1234');
+    await usePtwStore.getState().logout();
+    resolveLogin({ mustChangePin: false, state: { permits: [{ id: 'stale' }], users: [],
+      approverCertifications: {}, currentUser: { id: 'operator' }, notifications: [] } });
+    await login;
+    expect(usePtwStore.getState().currentUser).toBeNull();
+    expect(usePtwStore.getState().permits).toEqual([]);
+  });
+});
