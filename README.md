@@ -375,7 +375,7 @@ Các thành phần dùng chung cho approval, gas test, SIMOPS và audit trail.
 | Vitest 5 | Unit/critical tests |
 | CryptoJS | Hashing trong prototype |
 | `qrcode.react` | QR code |
-| Node.js 20+ | Runtime yêu cầu của package |
+| Node.js 22.x | Runtime yêu cầu của package |
 
 ---
 
