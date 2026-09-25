@@ -7,7 +7,7 @@
  * - QR góc trang · Audit Trail append-only · SIMOPS banner.
  * ==========================================================================*/
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { ApprovalLevel, PermitAction, ROLE_LABELS_VI, STATUS_LABELS_EN, User } from '../types/domain';
@@ -57,6 +57,18 @@ export function PermitDetailPage() {
   const approverCertifications = usePtwStore((s) => s.approverCertifications);
   const perform = usePtwStore((s) => s.perform);
   const [signoff, setSignoff] = useState<PendingAction | null>(null);
+  const signoffRef = useRef<PendingAction | null>(null);
+  const [submittingSignoff, setSubmittingSignoff] = useState(false);
+
+  const openSignoff = (action: PendingAction) => {
+    signoffRef.current = action;
+    setSignoff(action);
+  };
+
+  const closeSignoff = () => {
+    signoffRef.current = null;
+    setSignoff(null);
+  };
 
   const permit = permits.find((p) => p.id === id || p.permitNumber === id);
 
@@ -110,15 +122,13 @@ export function PermitDetailPage() {
   const mins = minutesUntil(permit.validUntil ?? permit.plannedEnd);
   const locked = !['DRAFT', 'RETURNED'].includes(permit.status);
 
-  const runAction = async (pin: string, comment: string): Promise<{ ok: boolean; error?: string }> => {
-    const active = signoff;
-    if (!active) return { ok: false, error: 'Không có hành động nào đang chờ ký.' };
+  const runAction = async (active: PendingAction, pin: string, comment: string): Promise<{ ok: boolean; error?: string; closeModal?: boolean }> => {
     const res = await perform(active.action, { id: permit.id }, pin, comment);
     if (!res.ok) return { ok: false, error: res.error };
-    // Only clear the signoff that was actually submitted – a newer pending
-    // action may have been opened in the meantime and must stay visible.
-    setSignoff((current) => (current === active ? null : current));
-    return { ok: true };
+    // Only let this request close its own modal. A newer pending action must
+    // stay visible.
+    const closeModal = signoffRef.current === active;
+    return { ok: true, closeModal };
   };
 
   return (
@@ -180,7 +190,7 @@ export function PermitDetailPage() {
         <CardContent className="flex flex-wrap gap-2">
           {actions.length === 0 && <p className="text-xs text-muted-foreground">Tài khoản của bạn không có hành động khả dụng ở trạng thái này (ma trận RBAC).</p>}
           {actions.map((a) => (
-            <Button key={a.action} variant={toButtonVariant(a.tone)} size="sm" onClick={() => setSignoff(a)} disabled={a.tone === 'outline'}>
+            <Button key={a.action} variant={toButtonVariant(a.tone)} size="sm" onClick={() => openSignoff(a)} disabled={a.tone === 'outline' || submittingSignoff}>
               {a.label}{a.tone === 'outline' && ' (demo)'}
             </Button>
           ))}
@@ -232,7 +242,7 @@ export function PermitDetailPage() {
       <AuditTrail entries={permit.statusHistory} />
 
       {/* ============================== SIGN-OFF MODAL ============================ */}
-      <SignoffModal pending={signoff} onClose={() => setSignoff(null)} onConfirm={runAction} permitNumber={permit.permitNumber} />
+      <SignoffModal pending={signoff} onClose={closeSignoff} onConfirm={runAction} onSubmittingChange={setSubmittingSignoff} permitNumber={permit.permitNumber} />
     </div>
   );
 }
@@ -246,10 +256,11 @@ function DetailField({ label, value }: { label: string; value: React.ReactNode }
   );
 }
 
-function SignoffModal({ pending, onClose, onConfirm, permitNumber }: {
+function SignoffModal({ pending, onClose, onConfirm, onSubmittingChange, permitNumber }: {
   pending: PendingAction | null;
   onClose: () => void;
-  onConfirm: (pin: string, comment: string) => Promise<{ ok: boolean; error?: string }>;
+  onConfirm: (action: PendingAction, pin: string, comment: string) => Promise<{ ok: boolean; error?: string; closeModal?: boolean }>;
+  onSubmittingChange: (submitting: boolean) => void;
   permitNumber: string;
 }) {
   const currentUser = usePtwStore((s) => s.currentUser);
@@ -260,17 +271,22 @@ function SignoffModal({ pending, onClose, onConfirm, permitNumber }: {
   const needsComment = !!pending && (pending.action === 'REJECT' || pending.action === 'RETURN_FOR_CLARIFICATION' || pending.action === 'SUSPEND' || pending.action === 'CREATE_REVISION');
 
   const confirm = async () => {
-    if (submitting) return;
+    const active = pending;
+    if (!active || submitting) return;
     setError(null);
     if (needsComment && !comment.trim()) { setError('Hành động này bắt buộc nhập lý do / bình luận.'); return; }
     setSubmitting(true);
+    onSubmittingChange(true);
     try {
-      const res = await onConfirm(pin, comment.trim());
+      const res = await onConfirm(active, pin, comment.trim());
       if (!res.ok) { setError(res.error ?? 'Ký/ghi nhận thất bại – kiểm tra PIN, quyền hạn hoặc dữ liệu đã bị thay đổi rồi thử lại.'); return; }
-      setPin(''); setComment('');
-      onClose();
+      if (res.closeModal) {
+        setPin(''); setComment('');
+        onClose();
+      }
     } finally {
       setSubmitting(false);
+      onSubmittingChange(false);
     }
   };
 

@@ -80,12 +80,7 @@ export function UsersAdminPage() {
       const res = await changePin(target.id, newPin, operatorPin);
       if (!res.ok) { setPinError(res.error ?? 'Lỗi.'); return; }
       setMsg({ ok: true, text: `Đã cập nhật PIN cho ${target.username}.` });
-      let stillSameTarget = false;
-      setPinTarget((current) => {
-        stillSameTarget = current?.id === target.id;
-        return stillSameTarget ? null : current;
-      });
-      if (stillSameTarget) setNewPin('');
+      setPinTarget((current) => current?.id === target.id ? null : current);
     } finally {
       setSavingPin(false);
     }
@@ -148,8 +143,8 @@ export function UsersAdminPage() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => { setPinError(null); setPinTarget(u); }}
-                          disabled={togglingUserId === u.id || u.id === currentUser.id}
+                          onClick={() => { setPinError(null); setNewPin(''); setPinTarget(u); }}
+                          disabled={savingPin || togglingUserId === u.id || u.id === currentUser.id}
                           title={u.id === currentUser.id ? 'Không thể cấp lại PIN cho chính tài khoản đang đăng nhập — phiên sẽ bị vô hiệu ngay lập tức. Hãy dùng chức năng tự đổi PIN.' : undefined}
                         >
                           Đổi PIN
