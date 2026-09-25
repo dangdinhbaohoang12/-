@@ -633,55 +633,5 @@ jobs:
               await disableAutoMerge(prGraph.id, !!prGraph.autoMergeRequest);
               await addCommentOnce(
                 prNumber,
-                `<!-- pr-final-gate:unresolved-review:${currentHeadSha} -->`,
+                `<!-- pr-final-gate:unresolved-review -->`,
                 `<!-- pr-final-gate:unresolved-review:${currentHeadSha} -->\nkhông thể hợp nhất khi có reviewer\n\nCó ít nhất một bình luận reviewer đang ở trạng thái **chưa được giải quyết**. Nhãn vẫn được giữ nguyên và auto-merge không được bật.`
-              );
-              core.notice('Unresolved reviewer threads block auto-merge; the ready label is intentionally retained.');
-              return;
-            }
-
-            if (blockingReviews.length > 0) {
-              await disableAutoMerge(prGraph.id, !!prGraph.autoMergeRequest);
-              await github.rest.issues.removeLabel({
-                owner,
-                repo,
-                issue_number: prNumber,
-                name: readyLabel
-              });
-
-              const reviewers = [...new Set(blockingReviews.map(review => review.user.login))];
-              await addCommentOnce(
-                prNumber,
-                `<!-- pr-final-gate:reviewer-block:${currentHeadSha} -->`,
-                `<!-- pr-final-gate:reviewer-block:${currentHeadSha} -->\nkhông thể hợp nhất khi có reviewer\n\nReviewer: ${reviewers.map(login => `@${login}`).join(', ')}. Nhãn \`${readyLabel}\` đã được tự động gỡ. Sau khi vấn đề được giải quyết, chủ kho lưu trữ phải thêm lại nhãn để cấp phép hợp nhất tự động.`
-              );
-              core.notice('Reviewer feedback blocks auto-merge and the ready label was removed.');
-              return;
-            }
-
-            // No blocking human review remains. Only APPROVED human reviews are allowed.
-            const invalidHumanReviews = [...latestReviewByHuman.values()].filter(review => review.state !== 'APPROVED' && review.state !== 'DISMISSED');
-            if (invalidHumanReviews.length > 0) {
-              await disableAutoMerge(prGraph.id, !!prGraph.autoMergeRequest);
-              core.notice('A human review exists with a non-approval state; auto-merge remains blocked.');
-              return;
-            }
-
-            // All CI passed, there are no blocking reviews/comments, and the explicit label is present.
-            await approveIfNeeded(prNumber, currentHeadSha, reviews);
-
-            // Re-fetch after our approval to ensure the PR head did not change during evaluation.
-            const latestPrResponse = await github.rest.pulls.get({
-              owner,
-              repo,
-              pull_number: prNumber
-            });
-            if (latestPrResponse.data.head.sha !== currentHeadSha) {
-              await disableAutoMerge(prGraph.id, !!prGraph.autoMergeRequest);
-              core.warning('PR head changed during evaluation; auto-merge was not enabled for the stale SHA.');
-              return;
-            }
-
-            // The approval above triggers pull_request_review again, but duplicate approvals for the same SHA are avoided.
-            await enableAutoMerge(prGraph.id, currentHeadSha);
-            core.notice('All configured gates passed. Auto-merge is enabled.');
