@@ -55,7 +55,7 @@ jobs:
         uses: actions/github-script@v9
         env:
           READY_LABEL: "sẵn sàng hợp nhất"
-          MERGE_METHOD: "MERGE"
+          MERGE_METHOD: "SQUASH"
           MAX_CI_WAIT_SECONDS: "900"
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -65,7 +65,7 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const readyLabel = process.env.READY_LABEL;
-            const mergeMethod = process.env.MERGE_METHOD || 'MERGE';
+            const mergeMethod = process.env.MERGE_METHOD || 'SQUASH';
             const maxCiWaitSeconds = Number(process.env.MAX_CI_WAIT_SECONDS || '900');
             const allowedSuccessfulConclusions = new Set(['success', 'neutral', 'skipped']);
             const blockingConclusions = new Set([
