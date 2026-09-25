@@ -100,8 +100,19 @@ interface ServerConfig {
  * before the request handler runs.
  */
 function getServerConfig(): ServerConfig {
+  const supabaseUrl = requiredEnv('SUPABASE_URL');
+  let parsed: URL;
+  try {
+    parsed = new URL(supabaseUrl);
+  } catch {
+    configurationError('SUPABASE_URL phải là URL HTTP hoặc HTTPS hợp lệ.');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    configurationError('SUPABASE_URL phải là URL HTTP hoặc HTTPS hợp lệ.');
+  }
+
   return {
-    supabaseUrl: requiredEnv('SUPABASE_URL').replace(/\/+$/, ''),
+    supabaseUrl: supabaseUrl.replace(/\/+$/, ''),
     supabaseServiceRoleKey: requiredSecret('SUPABASE_SERVICE_ROLE_KEY', 20),
     ptwSessionSecret: requiredSecret('PTW_SESSION_SECRET'),
     ptwAuditSecret: requiredSecret('PTW_AUDIT_SECRET'),

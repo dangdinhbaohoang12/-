@@ -15,6 +15,22 @@ export interface RemoteState {
   notifications: AppNotification[];
 }
 
+function connectionError(): Error {
+  const error = new Error('Không thể kết nối đến máy chủ PTW. Kiểm tra triển khai API và kết nối mạng.');
+  (error as { status?: number }).status = 0;
+  return error;
+}
+
+function invalidResponseError(status: number): Error {
+  const error = new Error(`Máy chủ PTW trả về phản hồi không hợp lệ (HTTP ${status}).`);
+  (error as { status?: number }).status = status;
+  return error;
+}
+
+function isPayload(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 async function request<T>(method: 'GET' | 'POST', body?: Record<string, unknown>): Promise<T> {
   let response: Response;
   try {
@@ -25,30 +41,38 @@ async function request<T>(method: 'GET' | 'POST', body?: Record<string, unknown>
       body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
     });
   } catch {
-    const error = new Error('Không thể kết nối đến máy chủ PTW. Kiểm tra triển khai API và kết nối mạng.');
-    (error as { status?: number }).status = 0;
-    throw error;
+    throw connectionError();
   }
 
-  const text = await response.text();
-  let payload: any = {};
+  let text: string;
+  try {
+    text = await response.text();
+  } catch {
+    throw connectionError();
+  }
+
+  let payload: unknown;
   if (text) {
     try {
       payload = JSON.parse(text);
     } catch {
-      payload = {};
+      if (response.ok) throw invalidResponseError(response.status);
     }
   }
 
-  if (!response.ok || payload.ok === false) {
+  if (payload === null) throw invalidResponseError(response.status);
+
+  if (!response.ok || (isPayload(payload) && payload.ok === false)) {
     const fallback =
       response.status >= 500
         ? 'Máy chủ PTW không phản hồi đúng định dạng. Kiểm tra API /api/ptw và biến môi trường Vercel.'
         : 'Yêu cầu máy chủ thất bại.';
-    const error = new Error(payload.error ?? fallback);
+    const error = new Error(isPayload(payload) && typeof payload.error === 'string' ? payload.error : fallback);
     (error as { status?: number }).status = response.status;
     throw error;
   }
+
+  if (!isPayload(payload)) throw invalidResponseError(response.status);
 
   return payload as T;
 }

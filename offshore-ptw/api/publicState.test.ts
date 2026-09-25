@@ -60,7 +60,30 @@ async function getState(userId: string) {
   return JSON.parse(responseBody).state;
 }
 
+async function post(body: Record<string, unknown>) {
+  let responseBody = '';
+  const response = {
+    statusCode: 0,
+    setHeader: () => {},
+    end: (body: string) => { responseBody = body; },
+  };
+  await handler({ method: 'POST', headers: {}, body }, response);
+  return { status: response.statusCode, body: JSON.parse(responseBody) };
+}
+
 describe('public state user data', () => {
+  it.each(['not a URL', 'ftp://supabase.example.test'])('returns a 503 configuration error for invalid SUPABASE_URL: %s', async (url) => {
+    vi.stubEnv('SUPABASE_URL', url);
+    try {
+      const response = await post({ operation: 'LOGIN', username: 'applicant', pin: '1234' });
+
+      expect(response.status).toBe(503);
+      expect(response.body).toEqual({ ok: false, error: 'Backend chưa được cấu hình đầy đủ trên Vercel.' });
+    } finally {
+      vi.stubEnv('SUPABASE_URL', 'https://supabase.example.test');
+    }
+  });
+
   it('limits a non-manager to their own contact details and certificates on visible permits', async () => {
     const state = await getState('applicant');
     expect(state.users).toEqual([]);
