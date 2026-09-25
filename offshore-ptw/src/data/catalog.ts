@@ -14,6 +14,7 @@ import {
   PermitTypeCode,
   PermitTypeMeta,
   Platform,
+  UserAccount,
 } from '../types/domain.js';
 
 /* ------------------------------ DANH MỤC GIÀN ---------------------------- */
@@ -143,12 +144,148 @@ export function getPermitTypeMeta(code: PermitTypeCode): PermitTypeMeta {
   return meta;
 }
 
-/* ------------------------- TÀI KHOẢN / BÍ MẬT -------------------------- */
+/* ----------------------------- TÀI KHOẢN HỆ THỐNG ------------------------ */
+
 /**
- * Tài khoản, PIN hash và credential bootstrap tuyệt đối không thuộc frontend.
- * Chúng được quản lý bởi backend + database; frontend chỉ nhận metadata công khai
- * của tài khoản hiện tại sau khi server xác thực.
+ * Predefined system accounts. The backend imports this catalog as its initial
+ * account source and never returns the PIN hashes to the client.
+ *
+ * The stored hashes are the legacy catalog format. The trusted backend accepts
+ * that format only for migration and upgrades each successful login to its
+ * server-side scrypt$v1 representation.
  */
+export const SYSTEM_ACCOUNTS: UserAccount[] = [
+  {
+    id: 'U-OIM-001',
+    username: 'tranvanhung',
+    fullName: 'Trần Văn Hùng',
+    role: 'OIM',
+    platformCode: 'MT1',
+    email: 'oim@ptw.local',
+    phone: 'XN-8100',
+    pinHash: '3aa5c23cefa9165698c11209952cef01066f12f3e2510c5cf18d064f841d6057',
+    active: true,
+    mustChangePin: false,
+    createdAt: '2026-01-05T01:00:00.000Z',
+    createdByUserId: 'SYSTEM-BOOTSTRAP',
+  },
+  {
+    id: 'U-DEP-001',
+    username: 'phamvankhoa',
+    fullName: 'Phạm Văn Khoa',
+    role: 'DEPUTY_OIM',
+    platformCode: 'MT1',
+    email: 'deputy.oim@ptw.local',
+    phone: 'XN-8110',
+    pinHash: '228d30da14ef4a7c467f00f14eda35785670e8668837223c7008531b2251341e',
+    active: true,
+    mustChangePin: false,
+    createdAt: '2026-01-05T01:05:00.000Z',
+    createdByUserId: 'U-OIM-001',
+  },
+  {
+    id: 'U-FPS-001',
+    username: 'lethiquyen',
+    fullName: 'Lê Thị Quyên',
+    role: 'FPS',
+    platformCode: 'MT1',
+    email: 'fps@ptw.local',
+    phone: 'XN-8120',
+    pinHash: '08114c98e1349a1b27f824263f1db0451b4d7dd85884707e65fbdb6a9e0f9408',
+    active: true,
+    mustChangePin: false,
+    createdAt: '2026-01-05T01:10:00.000Z',
+    createdByUserId: 'U-OIM-001',
+  },
+  {
+    id: 'U-LINE-001',
+    username: 'nguyenvana',
+    fullName: 'Nguyễn Văn A',
+    role: 'LINE_SUPERVISOR',
+    platformCode: 'MT1',
+    email: 'line.sup1@ptw.local',
+    phone: 'XN-8130',
+    pinHash: 'fe8e42401b2380229f98dc6fc514f6e61588f3f2d970bb41c2ee999ab028aa76',
+    active: true,
+    mustChangePin: false,
+    createdAt: '2026-01-06T02:00:00.000Z',
+    createdByUserId: 'U-OIM-001',
+  },
+  {
+    id: 'U-APP-001',
+    username: 'hoangminhtu',
+    fullName: 'Hoàng Minh Tú',
+    role: 'PERMIT_APPLICANT',
+    platformCode: 'MT1',
+    email: 'applicant1@ptw.local',
+    phone: 'XN-8140',
+    pinHash: '29107dcf3e0cdec21d8a3c9433c246a93dd8fc5e4eda1d825fd7411029470ada',
+    active: true,
+    mustChangePin: false,
+    createdAt: '2026-01-06T02:10:00.000Z',
+    createdByUserId: 'U-OIM-001',
+  },
+  {
+    id: 'U-PC-001',
+    username: 'vusithanh',
+    fullName: 'Vũ Thị Thanh',
+    role: 'PERMIT_CONTROLLER',
+    platformCode: 'MT1',
+    email: 'ptw.coordinator@ptw.local',
+    phone: 'XN-8150',
+    pinHash: 'bdded726e93de115b32c2efffecea6232443a7694586efcb4abbdcac94c9c803',
+    active: true,
+    mustChangePin: false,
+    createdAt: '2026-01-06T02:20:00.000Z',
+    createdByUserId: 'U-OIM-001',
+  },
+  {
+    id: 'U-HSE-001',
+    username: 'dangbaocan',
+    fullName: 'Đặng Bảo Cân',
+    role: 'HSE',
+    platformCode: 'MT1',
+    email: 'hse@ptw.local',
+    phone: 'XN-8160',
+    pinHash: '597af28c80aeeb9a162a32c0370864450ce1066495771ee0f323586151fb07af',
+    active: true,
+    mustChangePin: false,
+    createdAt: '2026-01-06T02:30:00.000Z',
+    createdByUserId: 'U-OIM-001',
+  },
+  {
+    id: 'U-ADM-001',
+    username: 'itadmin',
+    fullName: 'Trung tâm CNTT Biển Đông',
+    role: 'ADMINISTRATOR',
+    platformCode: 'MT1',
+    email: 'it.admin@ptw.local',
+    phone: 'XN-8199',
+    pinHash: '33c7367415c4da9d20dca9de0392a5a5e6b0137f7d4c48102939287af4f3bcc2',
+    active: true,
+    mustChangePin: true,
+    createdAt: '2026-01-05T00:00:00.000Z',
+    createdByUserId: 'SYSTEM-BOOTSTRAP',
+  },
+];
+
+/** Tra cứu tài khoản theo username (case-insensitive). */
+export function findAccountByUsername(username: string): UserAccount | undefined {
+  const normalized = username.trim().toLowerCase();
+  return SYSTEM_ACCOUNTS.find((account) => account.username.toLowerCase() === normalized);
+}
+
+/* ---------------------- BẢO TOÀN TƯƠNG THÍCH PIN CATALOG ------------------ */
+
+const PIN_PEPPER = 'OFFSHORE-PTW::LAN::v1::';
+
+export function hashPin(pin: string): string {
+  return CryptoJS.SHA256(PIN_PEPPER + pin).toString(CryptoJS.enc.Hex);
+}
+
+export function verifyPin(user: UserAccount, pin: string): boolean {
+  return /^\d{4,8}$/.test(pin) && user.pinHash.toLowerCase() === hashPin(pin).toLowerCase();
+}
 
 /* ---------------------- TRA CỨU PHỤC VỤ FORM / HỒ SƠ --------------------- */
 
