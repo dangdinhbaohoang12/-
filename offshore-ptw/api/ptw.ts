@@ -1758,7 +1758,69 @@ async function handlePost(req: AnyRequest, res: AnyResponse): Promise<void> {
   }
 }
 
-export default async function handler(req: AnyRequest, res: AnyResponse): Promise<void> {
+function isWebRequest(value: AnyRequest): boolean {
+  return Boolean(
+    value &&
+    typeof value === 'object' &&
+    value.headers &&
+    typeof value.headers.get === 'function'
+  );
+}
+
+async function adaptWebRequest(request: AnyRequest): Promise<AnyRequest> {
+  if (!isWebRequest(request)) return request;
+
+  const headers: Record<string, string> = {};
+  request.headers.forEach((value: string, key: string) => {
+    headers[key.toLowerCase()] = value;
+  });
+
+  let body: unknown = undefined;
+  if (request.method === 'POST') {
+    try {
+      body = await request.json();
+    } catch {
+      body = {};
+    }
+  }
+
+  return {
+    method: request.method,
+    headers,
+    body,
+  };
+}
+
+function createWebResponse(): {
+  response: AnyResponse;
+  toResponse: () => Response;
+} {
+  let statusCode = 200;
+  let responseBody: string | undefined;
+  const headers = new Headers();
+
+  const response: AnyResponse = {
+    get statusCode() {
+      return statusCode;
+    },
+    set statusCode(value: number) {
+      statusCode = value;
+    },
+    setHeader(name: string, value: string | string[]): void {
+      headers.set(name, Array.isArray(value) ? value.join(', ') : value);
+    },
+    end(body?: string): void {
+      responseBody = body;
+    },
+  };
+
+  return {
+    response,
+    toResponse: () => new Response(responseBody, { status: statusCode, headers }),
+  };
+}
+
+async function handleHttp(req: AnyRequest, res: AnyResponse): Promise<void> {
   try {
     res.setHeader('Cache-Control', 'no-store');
     if (req.method === 'GET' || req.method === 'POST') {
@@ -1781,4 +1843,23 @@ export default async function handler(req: AnyRequest, res: AnyResponse): Promis
   } catch (error) {
     sendError(res, error);
   }
+}
+
+/**
+ * Supports both the legacy VercelRequest/VercelResponse signature and the
+ * current Web Request/Response adapter used by Vercel's Node.js runtime.
+ */
+export default async function handler(
+  req: AnyRequest,
+  res?: AnyResponse,
+): Promise<void | Response> {
+  if (res && typeof res.setHeader === 'function') {
+    await handleHttp(req, res);
+    return;
+  }
+
+  const adaptedRequest = await adaptWebRequest(req);
+  const web = createWebResponse();
+  await handleHttp(adaptedRequest, web.response);
+  return web.toResponse();
 }
