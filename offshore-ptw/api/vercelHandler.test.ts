@@ -24,7 +24,7 @@ describe('Vercel PTW handler contract', () => {
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toMatchObject({
       ok: false,
-      error: 'Backend chưa được cấu hình đầy đủ trên Vercel.',
+      error: 'Thiếu biến môi trường máy chủ: SUPABASE_URL',
     });
   });
   it('does not require the audit secret for a request that does not sign audit data', async () => {
