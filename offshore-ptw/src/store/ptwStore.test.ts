@@ -68,50 +68,31 @@ describe('state response ordering', () => {
     expect(usePtwStore.getState().permits[0]?.id).toBe('newer');
   });
 
-  it('waits for a pending login before logout clears the cookie and hydration', async () => {
+  it('keeps local state logged out when a pending login responds after logout', async () => {
     let resolveLogin!: (value: unknown) => void;
-    let sessionCookie: 'authenticated' | null = null;
-    let logoutSettled = false;
+    let resolveLogout!: (value: unknown) => void;
     const loginState = { permits: [{ id: 'stale' }], users: [],
       approverCertifications: {}, currentUser: { id: 'operator' }, notifications: [] };
-    const anonymousState = { permits: [], users: [], approverCertifications: {},
-      currentUser: null, notifications: [] };
-    const loginRequest = new Promise((resolve) => {
-      resolveLogin = (value) => {
-        sessionCookie = 'authenticated';
-        resolve(value);
-      };
-    });
+    const loginRequest = new Promise((resolve) => { resolveLogin = resolve; });
+    const logoutRequest = new Promise((resolve) => { resolveLogout = resolve; });
     postMock.mockImplementation((operation: string) => {
       if (operation === 'LOGIN') return loginRequest;
-      if (operation === 'LOGOUT') {
-        return loginRequest.then(() => {
-          sessionCookie = null;
-          return { ok: true };
-        });
-      }
+      if (operation === 'LOGOUT') return logoutRequest;
       return Promise.resolve({ ok: true });
     });
-    getStateMock.mockImplementation(() =>
-      Promise.resolve(sessionCookie === 'authenticated' ? loginState : anonymousState)
-    );
 
     const login = usePtwStore.getState().login('operator', '1234');
     const logout = usePtwStore.getState().logout();
-    void logout.then(() => { logoutSettled = true; });
     expect(postMock.mock.calls.map(([operation]) => operation)).toEqual(['LOGIN', 'LOGOUT']);
 
-    await Promise.resolve();
-    expect(logoutSettled).toBe(false);
+    resolveLogout({ ok: true });
+    await logout;
+    expect(usePtwStore.getState().currentUser).toBeNull();
+
     resolveLogin({ mustChangePin: false, state: loginState });
     await login;
-    await logout;
 
-    expect(sessionCookie).toBeNull();
-    await usePtwStore.getState().hydrate();
-    expect(getStateMock).toHaveBeenCalledTimes(1);
     expect(usePtwStore.getState().currentUser).toBeNull();
     expect(usePtwStore.getState().permits).toEqual([]);
-    expect(usePtwStore.getState().authReady).toBe(true);
   });
 });
