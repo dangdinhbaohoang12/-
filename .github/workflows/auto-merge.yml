@@ -274,11 +274,10 @@ jobs:
               }
             }
 
-            async function getWorkflowRunsForSha(headSha) {
+            async function getWorkflowRunsForRepo() {
               return github.paginate(github.rest.actions.listWorkflowRunsForRepo, {
                 owner,
                 repo,
-                head_sha: headSha,
                 per_page: 100
               });
             }
@@ -306,11 +305,17 @@ jobs:
               const deadline = Date.now() + maxCiWaitSeconds * 1000;
 
               while (Date.now() < deadline) {
-                const [workflowRuns, checkRuns, combinedStatus] = await Promise.all([
-                  getWorkflowRunsForSha(headSha),
+                const [allWorkflowRuns, checkRuns, combinedStatus] = await Promise.all([
+                  getWorkflowRunsForRepo(),
                   getCheckRunsForSha(headSha),
                   getCombinedStatuses(headSha)
                 ]);
+
+                // Lọc danh sách workflow runs liên quan tới PR hiện tại
+                const workflowRuns = allWorkflowRuns.filter(run =>
+                  run.head_sha === headSha ||
+                  run.pull_requests?.some(pr => pr.number === prNumber)
+                );
 
                 // Only repository-owned CI is a merge gate. Third-party AI/security
                 // integrations are handled separately and must not make this loop
@@ -323,7 +328,7 @@ jobs:
                   run.name === 'Typecheck / Test / Build'
                 );
 
-               const sawCi = requiredWorkflowRuns.some(run =>
+                const sawCi = requiredWorkflowRuns.some(run =>
                   run.event === 'pull_request' &&
                   run.pull_requests?.some(pr => pr.number === prNumber) &&
                   run.status === 'completed'
