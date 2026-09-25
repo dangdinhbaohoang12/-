@@ -1,4 +1,5 @@
 import { createHmac, scryptSync } from 'node:crypto';
+import { SYSTEM_ACCOUNTS } from '../src/data/catalog.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const derivationStats = vi.hoisted(() => ({ active: 0, peak: 0 }));
@@ -77,7 +78,12 @@ beforeEach(() => {
       return Response.json([]);
     }
     if (path.endsWith('/ptw_users')) {
-      if (init?.method === 'POST') throw new Error('Unexpected bootstrap insert');
+      if (init?.method === 'POST') {
+        const row = JSON.parse(String(init.body));
+        if (userRows.some((user) => user.username === row.username)) return new Response(null, { status: 409 });
+        userRows.push(row);
+        return Response.json([row]);
+      }
       const id = url.searchParams.get('id')?.slice(3);
       if (init?.method === 'PATCH') {
         const user = userRows.find((row) => row.id === id);
@@ -203,16 +209,30 @@ describe('server controlled security evidence', () => {
     expect(transactions.map(({ path }) => path)).toEqual(['/rest/v1/rpc/ptw_reserve_auth_attempt']);
   });
 
-  it.each(['13579246', '123456'])('rejects sample bootstrap PIN %s before insert', async (pin) => {
+  it('seeds all predefined system accounts from catalog and upgrades the first successful login to scrypt', async () => {
     userRows = [];
-    vi.stubEnv('BOOTSTRAP_OIM_USERNAME', 'bootstrap');
-    vi.stubEnv('BOOTSTRAP_OIM_PIN', pin);
-    vi.stubEnv('BOOTSTRAP_OIM_FULL_NAME', 'Bootstrap OIM');
-    vi.stubEnv('BOOTSTRAP_OIM_PLATFORM_CODE', 'MT1');
-    const response = await post({ operation: 'LOGIN', username: 'bootstrap', pin });
-    expect(response.status).toBe(503);
-    expect(vi.mocked(fetch).mock.calls.some(([input, init]) =>
-      String(input).includes('/ptw_users') && init?.method === 'POST')).toBe(false);
+    const account = SYSTEM_ACCOUNTS.find((item) => item.username === 'tranvanhung');
+    if (!account) throw new Error('Catalog OIM account missing');
+
+    const response = await post({ operation: 'LOGIN', username: account.username, pin: '912345' });
+
+    expect(response.status).toBe(200);
+    expect(userRows).toHaveLength(SYSTEM_ACCOUNTS.length);
+    const seeded = userRows.find((user) => user.username === account.username);
+    expect(seeded).toMatchObject({
+      id: account.id,
+      role: account.role,
+      platform_code: account.platformCode,
+      full_name: account.fullName,
+    });
+    expect(seeded.pin_hash).toMatch(/^scrypt\$v1\$/);
+  });
+
+  it('does not require bootstrap environment variables for an unknown login', async () => {
+    userRows = [];
+    const response = await post({ operation: 'LOGIN', username: 'unknown-user', pin: '9999' });
+    expect(response.status).toBe(401);
+    expect(userRows).toHaveLength(SYSTEM_ACCOUNTS.length);
   });
 
   it.each([
