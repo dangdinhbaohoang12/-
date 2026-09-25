@@ -30,6 +30,7 @@ export function UsersAdminPage() {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [pinTarget, setPinTarget] = useState<User | null>(null);
   const [newPin, setNewPin] = useState('');
+  const [pinError, setPinError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const creatingRef = useRef(false);
   const [savingPin, setSavingPin] = useState(false);
@@ -73,18 +74,18 @@ export function UsersAdminPage() {
     // Capture the target being submitted so cleanup only touches this
     // request's modal – not a different one the operator opened afterwards.
     const target = pinTarget;
+    setPinError(null);
     setSavingPin(true);
     try {
       const res = await changePin(target.id, newPin, operatorPin);
-      setMsg(res.ok ? { ok: true, text: `Đã cập nhật PIN cho ${target.username}.` } : { ok: false, text: res.error ?? 'Lỗi.' });
-      if (res.ok) {
-        let stillSameTarget = false;
-        setPinTarget((current) => {
-          stillSameTarget = current?.id === target.id;
-          return stillSameTarget ? null : current;
-        });
-        if (stillSameTarget) setNewPin('');
-      }
+      if (!res.ok) { setPinError(res.error ?? 'Lỗi.'); return; }
+      setMsg({ ok: true, text: `Đã cập nhật PIN cho ${target.username}.` });
+      let stillSameTarget = false;
+      setPinTarget((current) => {
+        stillSameTarget = current?.id === target.id;
+        return stillSameTarget ? null : current;
+      });
+      if (stillSameTarget) setNewPin('');
     } finally {
       setSavingPin(false);
     }
@@ -147,7 +148,7 @@ export function UsersAdminPage() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => setPinTarget(u)}
+                          onClick={() => { setPinError(null); setPinTarget(u); }}
                           disabled={togglingUserId === u.id || u.id === currentUser.id}
                           title={u.id === currentUser.id ? 'Không thể cấp lại PIN cho chính tài khoản đang đăng nhập — phiên sẽ bị vô hiệu ngay lập tức. Hãy dùng chức năng tự đổi PIN.' : undefined}
                         >
@@ -171,6 +172,7 @@ export function UsersAdminPage() {
           <div className="ptw-modal-in w-full max-w-sm rounded-2xl border border-border bg-card p-5" onClick={(e) => e.stopPropagation()}>
             <p className="mb-3 text-sm font-bold">Cấp lại PIN cho @{pinTarget.username}</p>
             <input type="password" inputMode="numeric" maxLength={8} autoFocus className={inputClass} value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))} placeholder="PIN mới 4–8 chữ số" disabled={savingPin} />
+            {pinError && <p role="alert" className="mt-3 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">⛔ {pinError}</p>}
             <div className="mt-3 flex justify-end gap-2">
               <Button variant="ghost" onClick={() => setPinTarget(null)} disabled={savingPin}>Hủy</Button>
               <Button variant="primary" onClick={savePin} disabled={newPin.length < 4 || savingPin}>{savingPin ? 'Đang lưu…' : 'Xác nhận'}</Button>
