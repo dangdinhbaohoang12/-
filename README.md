@@ -4,7 +4,7 @@
 
 Repository này chứa một ứng dụng web React/TypeScript cùng API serverless trên Vercel và cơ sở dữ liệu PostgreSQL/Supabase. Mục tiêu của phiên bản hiện tại là số hóa vòng đời PTW, RBAC, approval chain, Gas Test, SIMOPS, revision, audit trail và notification, đồng thời đưa authentication và các kiểm tra authorization quan trọng ra khỏi trình duyệt.
 
-> ⚠️ **Lưu ý an toàn:** Đây là phần mềm mô phỏng/nghiệm thu nghiệp vụ và **không tự động trở thành hệ thống PTW production hoặc nguồn dữ liệu an toàn duy nhất** chỉ vì đã có backend. Trước khi sử dụng thực tế phải triển khai, kiểm định, cấu hình và phê duyệt theo quy trình HSE/IT của đơn vị vận hành. Các ngưỡng Gas Test và workflow trong mã nguồn là cấu hình của repository, không phải tuyên bố rằng chúng phù hợp cho mọi giàn hoặc quy chuẩn.
+> ⚠️ **Lưu ý an toàn:** Đây là phần mềm đang phát triển. Nó có thể có lỗi về bảo mật/giao diện/bankend. tôi không chịu tránh nhiệm nếu có vấn đề gì xảy ra.
 
 ## 🌐 Demo và repository
 
