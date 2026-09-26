@@ -686,7 +686,9 @@ async function authenticateLogin(usernameInput: string, pin: string): Promise<an
     last_login_at: nowIso(),
   };
   if (isLegacyCatalogPinHash(String(user.pin_hash ?? ''))) updates.pin_hash = await hashPinServer(pin);
-  return await updateUser(user.id, updates, String(user.pin_hash ?? '')) ?? user;
+  const updatedUser = await updateUser(user.id, updates, String(user.pin_hash ?? ''));
+  if (!updatedUser) authFailure('Username hoặc PIN không đúng.');
+  return updatedUser;
 }
 
 async function parseBody(req: AnyRequest): Promise<any> {
