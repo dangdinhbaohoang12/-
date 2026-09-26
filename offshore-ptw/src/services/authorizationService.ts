@@ -16,6 +16,7 @@ import {
 } from '../engine/workflowStateMachine';
 import { unacknowledgedBlockers } from '../engine/simopsEngine';
 import { SimopsConflict } from '../types/domain';
+import { canRecordGasTest } from '../engine/gasTestEngine';
 
 export interface ActionAvailability {
   action: PermitAction;
@@ -109,11 +110,9 @@ export function getAvailableActions(
     ['APPROVED', 'WORK_IN_PROGRESS', 'SUSPENDED', 'RESUMED', 'WORK_COMPLETED'].includes(permit.status),
     'Chỉ permit đã phát hành mới cần Request Revision.'
   );
-  setAvail(
-    'ADD_GAS_TEST',
-    permit.requiresGasTest &&
-      !['CLOSED', 'CANCELLED', 'REJECTED', 'EXPIRED'].includes(permit.status)
-  );
+  // Gas Test is valid as a reference measurement even when the permit type
+  // does not require it; terminal permits remain blocked.
+  setAvail('ADD_GAS_TEST', canRecordGasTest(permit));
 
   return results;
 }

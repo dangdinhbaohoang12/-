@@ -13,6 +13,7 @@ import { ROLE_LABELS_VI, Role } from '../../types/domain';
 import { usePtwStore } from '../../store/ptwStore';
 import { Badge } from '../ui/primitives';
 import { cn } from '../../lib/utils';
+import { countUnreadNotifications, getUserNotifications } from '../../services/notificationService';
 
 const NAV = [
   { to: '/', label: 'Bảng điều khiển', icon: '📊', end: true },
@@ -30,7 +31,9 @@ export function AppLayout() {
   const changeOwnPin = usePtwStore((s) => s.changeOwnPin);
   const notifications = usePtwStore((s) => s.notifications);
   const refreshExpiries = usePtwStore((s) => s.refreshExpiries);
+  const markNotificationRead = usePtwStore((s) => s.markNotificationRead);
   const [showQr, setShowQr] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
 
   useEffect(() => {
     // Single polling interval for the whole authenticated session – pages
@@ -44,7 +47,8 @@ export function AppLayout() {
   }, [refreshExpiries]);
 
   if (!currentUser) return null;
-  const unread = notifications.filter((n) => n.recipientUserId === currentUser.id && !n.readAt).length;
+  const userNotifications = getUserNotifications(notifications, currentUser.id);
+  const unread = countUnreadNotifications(userNotifications);
   const canCreate = currentUser.role !== 'ADMINISTRATOR';
 
   return (
@@ -105,9 +109,54 @@ export function AppLayout() {
             <button type="button" onClick={() => setShowQr((v) => !v)} className="rounded-lg border border-border px-2 py-1 text-xs hover:bg-muted" title="Mã QR phiên trực">
               🔳 QR phiên trực
             </button>
-            <button type="button" onClick={() => navigate('/permits')} className="relative rounded-lg border border-border px-2 py-1 text-xs hover:bg-muted" title="Thông báo">
-              🔔 {unread > 0 && <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-600 px-1 text-[9px] font-bold text-white">{unread}</span>}
-            </button>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowNotifications((v) => !v)}
+                className="relative rounded-lg border border-border px-2 py-1 text-xs hover:bg-muted"
+                title="Thông báo"
+                aria-expanded={showNotifications}
+              >
+                🔔 {unread > 0 && <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-600 px-1 text-[9px] font-bold text-white">{unread}</span>}
+              </button>
+              {showNotifications && (
+                <div className="absolute right-0 top-10 z-50 w-[min(28rem,calc(100vw-2rem))] overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
+                  <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                    <div>
+                      <p className="text-sm font-bold">Thông báo</p>
+                      <p className="text-[10px] text-muted-foreground">{unread} chưa đọc · {userNotifications.length} tổng cộng</p>
+                    </div>
+                    <button type="button" className="text-[10px] text-primary hover:underline" onClick={() => setShowNotifications(false)}>Đóng</button>
+                  </div>
+                  <div className="max-h-96 overflow-y-auto">
+                    {userNotifications.length === 0 ? (
+                      <p className="px-4 py-8 text-center text-xs text-muted-foreground">Chưa có thông báo.</p>
+                    ) : userNotifications.map((notification) => (
+                      <button
+                        key={notification.id}
+                        type="button"
+                        className={cn(
+                          'block w-full border-b border-border/60 px-4 py-3 text-left transition-colors hover:bg-muted/50',
+                          !notification.readAt && 'bg-primary/5'
+                        )}
+                        onClick={async () => {
+                          if (!notification.readAt) await markNotificationRead(notification.id);
+                          setShowNotifications(false);
+                          if (notification.permitId) navigate(`/permits/${notification.permitId}`);
+                        }}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{notification.severity} · {notification.event}</span>
+                          {!notification.readAt && <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-primary" aria-label="Chưa đọc" />}
+                        </div>
+                        <p className="mt-1 text-xs leading-5">{notification.message}</p>
+                        <p className="mt-1 text-[10px] text-muted-foreground">{new Date(notification.createdAt).toLocaleString('vi-VN')}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
             <button
               type="button"
               onClick={async () => {
@@ -190,3 +239,4 @@ function RequiredPinChangeModal({ onChange }: {
     </div>
   </div>;
 }
+

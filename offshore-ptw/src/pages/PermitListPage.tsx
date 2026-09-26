@@ -11,7 +11,10 @@ import { Badge, Card, CardContent, CardHeader, CardTitle, inputClass } from '../
 import { STATUS_META, RISK_TONE } from '../lib/statusMeta';
 import { formatTimestamp } from '../lib/utils';
 
-const FILTERS: ('ALL' | PermitStatus)[] = ['ALL', 'SUBMITTED', 'OIM_REVIEW', 'APPROVED', 'WORK_IN_PROGRESS', 'SUSPENDED', 'EXPIRED', 'CLOSED', 'REJECTED'];
+export const FILTERS: ('ALL' | PermitStatus)[] = [
+  'ALL',
+  ...(Object.keys(STATUS_LABELS_EN) as PermitStatus[]),
+];
 
 export function PermitListPage() {
   const navigate = useNavigate();
