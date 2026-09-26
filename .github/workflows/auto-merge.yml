@@ -1587,7 +1587,7 @@ jobs:
                 }
               }
 
-              
+              /*
                * If the label has been removed after a previous
                * run enabled auto-merge, explicitly turn it off.
                */
