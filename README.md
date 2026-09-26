@@ -176,7 +176,7 @@ Backend lưu audit record theo hướng append-only và thực hiện mutation n
 
 ### 🔔 Notifications
 
-Các sự kiện PTW có notification tương ứng, gồm submit, chờ duyệt, return, reject, approve, sắp hết hạn, hết hạn, suspend/resume, cancel, hoàn thành/đóng, SIMOPS conflict, Gas Test fail và calibration due.
+Các sự kiện PTW có notification tương ứng, gồm submit, chờ duyệt, return, reject, approve, suspend/resume, cancel, hoàn thành/đóng và Gas Test fail.
 
 ---
 
@@ -463,7 +463,7 @@ Mặc định Vercel dev chạy ở `http://localhost:3000`. Vite đã được 
 Có thể đổi target bằng:
 
 ```bash
-PTW_API_PROXY_TARGET=http://localhost:3001
+export PTW_API_PROXY_TARGET=http://localhost:3001
 ```
 
 ### 5. Kiểm tra type
