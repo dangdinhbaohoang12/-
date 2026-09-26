@@ -49,7 +49,8 @@ permissions:
 
 concurrency:
   group: pr-final-gate-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number || 'unknown' }}
-  cancel-in-progress: true
+  # Final Gate waits for CI and mutates PR state; queued events must not cancel an active evaluation.
+  cancel-in-progress: false
 
 jobs:
   final-gate:
