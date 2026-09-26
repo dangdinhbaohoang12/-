@@ -38,7 +38,6 @@ import {
   getPermitTypeMeta,
   hashPin,
 } from '../src/data/catalog.js';
-import { TERMINAL_STATUSES } from '../src/types/domain.js';
 import type {
   AppNotification,
   GasParameter,
