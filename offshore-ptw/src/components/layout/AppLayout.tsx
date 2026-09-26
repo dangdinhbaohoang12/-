@@ -12,7 +12,8 @@ import { QRCodeSVG } from 'qrcode.react';
 import { ROLE_LABELS_VI, Role } from '../../types/domain';
 import { usePtwStore } from '../../store/ptwStore';
 import { Badge } from '../ui/primitives';
-import { cn, formatTimestamp } from '../../lib/utils';
+import { cn } from '../../lib/utils';
+import { countUnreadNotifications, getUserNotifications } from '../../services/notificationService';
 
 const NAV = [
   { to: '/', label: 'Bảng điều khiển', icon: '📊', end: true },
@@ -46,10 +47,8 @@ export function AppLayout() {
   }, [refreshExpiries]);
 
   if (!currentUser) return null;
-  const userNotifications = notifications
-    .filter((n) => n.recipientUserId === currentUser.id)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const unread = userNotifications.filter((n) => !n.readAt).length;
+  const userNotifications = getUserNotifications(notifications, currentUser.id);
+  const unread = countUnreadNotifications(userNotifications);
   const canCreate = currentUser.role !== 'ADMINISTRATOR';
 
   return (
@@ -151,7 +150,7 @@ export function AppLayout() {
                           {!notification.readAt && <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-primary" aria-label="Chưa đọc" />}
                         </div>
                         <p className="mt-1 text-xs leading-5">{notification.message}</p>
-                        <p className="mt-1 text-[10px] text-muted-foreground">{formatNotificationTime(notification.createdAt)}</p>
+                        <p className="mt-1 text-[10px] text-muted-foreground">{new Date(notification.createdAt).toLocaleString('vi-VN')}</p>
                       </button>
                     ))}
                   </div>
@@ -241,7 +240,3 @@ function RequiredPinChangeModal({ onChange }: {
   </div>;
 }
 
-
-function formatNotificationTime(timestamp: string): string {
-  return formatTimestamp(timestamp);
-}
