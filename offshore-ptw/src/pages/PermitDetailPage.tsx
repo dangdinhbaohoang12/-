@@ -99,6 +99,7 @@ export function PermitDetailPage() {
     }
     check('COMPLETE_WORK', '🏁 Hoàn thành thi công', 'primary');
     check('CLOSE', '🗄️ Đóng permit', 'success');
+    check('CANCEL', '🛑 Hủy permit', 'danger');
     check('CREATE_REVISION', '📝 Lập bản sửa đổi mới', 'primary');
     return list;
   }, [permit, currentUser, simulatedRole]);
