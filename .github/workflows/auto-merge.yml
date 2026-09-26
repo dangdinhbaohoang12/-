@@ -692,7 +692,7 @@ jobs:
                       relevantWorkflowRuns,
                     checkRuns:
                       relevantCiCheckRuns,
-                    combinedStatus
+                    combinedStatus,
                     requiredCiComplete: true,
                   };
                 }
@@ -2198,7 +2198,6 @@ jobs:
               }
 
               /*
-              /*
                * Final CI invariant: re-read the required CI evidence
                * immediately before changing merge state. This guarantees
                * Auto-Merge is never newly enabled while required CI is
@@ -2214,7 +2213,7 @@ jobs:
                   "CI bắt buộc chưa hoàn tất ở lần kiểm tra cuối; không bật Auto-Merge."
                 );
               }
-
+              /*
                * 9. Enable Auto-Merge only.
                *
                * IMPORTANT:
