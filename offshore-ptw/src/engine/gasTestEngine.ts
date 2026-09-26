@@ -10,7 +10,7 @@
  * Máy đo phải còn hạn hiệu chuẩn tại thời điểm đo.
  * ==========================================================================*/
 
-import { GasParameter, GasTestRecord, TestResult } from '../types/domain.js';
+import { GasParameter, GasTestRecord, PermitStatus, TERMINAL_STATUSES, TestResult } from '../types/domain.js';
 
 export interface GasSpec {
   parameter: GasParameter;
@@ -36,6 +36,11 @@ export function evaluateReading(parameter: GasParameter, value: number): TestRes
   if (spec.min !== undefined && value < spec.min) return 'FAIL';
   if (spec.max !== undefined && value > spec.max) return 'FAIL';
   return 'PASS';
+}
+
+/** Gas Test có thể được ghi nhận cho mọi permit chưa ở trạng thái kết thúc. */
+export function canRecordGasTest(permit: { status: PermitStatus }): boolean {
+  return !TERMINAL_STATUSES.includes(permit.status);
 }
 
 /** Máy đo hết hạn hiệu chuẩn tại thời điểm đo => toàn bộ phép đo vô hiệu. */
