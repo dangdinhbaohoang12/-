@@ -32,7 +32,10 @@ import {
   AREAS,
   EQUIPMENT,
   PLATFORMS,
+  SYSTEM_ACCOUNTS,
+  findAccountByUsername,
   getPermitTypeMeta,
+  hashPin,
 } from '../src/data/catalog.js';
 import { TERMINAL_STATUSES } from '../src/types/domain.js';
 import type {
@@ -148,8 +151,6 @@ function validPin(pin: string): boolean {
   return /^\d{4,8}$/.test(pin);
 }
 
-const KNOWN_SAMPLE_BOOTSTRAP_PINS = new Set(['13579246', '1234', '123456', '12345678']);
-
 /**
  * scrypt cost for hashing PINs. The key space of a 4–8 digit PIN is only
  * 10^4–10^8, so if pin_hash ever leaks, offline cracking is bounded almost
@@ -199,8 +200,25 @@ async function hashPinServer(pin: string): Promise<string> {
   return 'scrypt$v1$' + salt.toString('base64url') + '$' + derived.toString('base64url');
 }
 
+function isLegacyCatalogPinHash(encoded: string): boolean {
+  return /^[0-9a-f]{64}$/i.test(encoded);
+}
+
+function verifyLegacyCatalogPinHash(pin: string, encoded: string): boolean {
+  if (!validPin(pin) || !isLegacyCatalogPinHash(encoded)) return false;
+  try {
+    const actual = Buffer.from(hashPin(pin), 'hex');
+    const expected = Buffer.from(encoded, 'hex');
+    return actual.length === expected.length && timingSafeEqual(actual, expected);
+  } catch {
+    return false;
+  }
+}
+
 async function verifyPinHash(pin: string, encoded: string): Promise<boolean> {
-  if (!validPin(pin) || !encoded.startsWith('scrypt$v1$')) return false;
+  if (!validPin(pin)) return false;
+  if (isLegacyCatalogPinHash(encoded)) return verifyLegacyCatalogPinHash(pin, encoded);
+  if (!encoded.startsWith('scrypt$v1$')) return false;
   const parts = encoded.split('$');
   if (parts.length !== 4) return false;
   try {
@@ -370,8 +388,17 @@ async function insertUser(row: Record<string, unknown>): Promise<any> {
   return rows?.[0] ?? row;
 }
 
-async function updateUser(id: string, patch: Record<string, unknown>): Promise<any> {
-  const rows = await supabase('ptw_users?id=eq.' + encodeURIComponent(id), {
+async function updateUser(
+  id: string,
+  patch: Record<string, unknown>,
+  expectedPinHash?: string,
+): Promise<any> {
+  let path = 'ptw_users?id=eq.' + encodeURIComponent(id);
+  if (expectedPinHash !== undefined) {
+    path += '&pin_hash=eq.' + encodeURIComponent(expectedPinHash);
+  }
+
+  const rows = await supabase(path, {
     method: 'PATCH',
     body: JSON.stringify(patch),
   });
@@ -513,40 +540,38 @@ async function publicState(userRow: any | null): Promise<Record<string, unknown>
   };
 }
 
-async function ensureBootstrapUser(): Promise<void> {
-  const existing = await supabase('ptw_users?select=id&limit=1');
-  if (existing?.length) return;
+async function ensureCatalogUsers(): Promise<void> {
+  const existingRows = await getAllUserRows();
+  const existingUsernames = new Set(
+    existingRows.map((row) => normalizeUsername(String(row.username ?? ''))).filter(Boolean)
+  );
 
-  const username = normalizeUsername(process.env.BOOTSTRAP_OIM_USERNAME ?? '');
-  const pin = process.env.BOOTSTRAP_OIM_PIN ?? '';
-  const fullName = process.env.BOOTSTRAP_OIM_FULL_NAME ?? '';
-  const platformCode = process.env.BOOTSTRAP_OIM_PLATFORM_CODE ?? '';
-  if (!username || !validPin(pin) || KNOWN_SAMPLE_BOOTSTRAP_PINS.has(pin) || !fullName || !platformCode) {
-    configurationError(
-      'Thiếu hoặc không hợp lệ các biến môi trường BOOTSTRAP_OIM_USERNAME, BOOTSTRAP_OIM_PIN, BOOTSTRAP_OIM_FULL_NAME hoặc BOOTSTRAP_OIM_PLATFORM_CODE.'
-    );
-  }
-
-  try {
-    await insertUser({
-      id: 'U-OIM-BOOTSTRAP',
-      username,
-      full_name: fullName,
-      role: 'OIM',
-      platform_code: platformCode,
-      email: process.env.BOOTSTRAP_OIM_EMAIL || null,
-      phone: process.env.BOOTSTRAP_OIM_PHONE || null,
-      pin_hash: await hashPinServer(pin),
-      active: true,
-      must_change_pin: true,
-      created_at: nowIso(),
-      created_by_user_id: 'SYSTEM-BOOTSTRAP',
-      failed_login_count: 0,
-      locked_until: null,
-      session_version: 1,
-    });
-  } catch (error) {
-    if ((error as any)?.status !== 409) throw error;
+  for (const account of SYSTEM_ACCOUNTS) {
+    const username = normalizeUsername(account.username);
+    if (existingUsernames.has(username)) continue;
+    try {
+      await insertUser({
+        id: account.id,
+        username,
+        full_name: account.fullName,
+        role: account.role,
+        platform_code: account.platformCode,
+        email: account.email ?? null,
+        phone: account.phone ?? null,
+        pin_hash: account.pinHash,
+        active: account.active,
+        must_change_pin: account.mustChangePin,
+        created_at: account.createdAt,
+        created_by_user_id: account.createdByUserId ?? null,
+        failed_login_count: 0,
+        locked_until: null,
+        session_version: 1,
+      });
+      existingUsernames.add(username);
+    } catch (error) {
+      if ((error as any)?.status !== 409) throw error;
+      existingUsernames.add(username);
+    }
   }
 }
 
@@ -630,7 +655,9 @@ function lockoutError(): never {
 async function ensurePin(user: any, pin: string): Promise<void> {
   const { lockedUntil } = await reserveAuthAttempt(user.id);
   if (await verifyPinHash(pin, user.pin_hash)) {
-    await updateUser(user.id, { failed_login_count: 0, locked_until: null });
+    const updates: Record<string, unknown> = { failed_login_count: 0, locked_until: null };
+    if (isLegacyCatalogPinHash(String(user.pin_hash ?? ''))) updates.pin_hash = await hashPinServer(pin);
+    await updateUser(user.id, updates);
     return;
   }
   if (lockedUntil) lockoutError();
@@ -640,7 +667,7 @@ async function ensurePin(user: any, pin: string): Promise<void> {
 }
 
 async function authenticateLogin(usernameInput: string, pin: string): Promise<any> {
-  await ensureBootstrapUser();
+  await ensureCatalogUsers();
   const username = normalizeUsername(usernameInput);
   const user = await getUserByUsername(username);
   if (!user) return null;
@@ -653,11 +680,15 @@ async function authenticateLogin(usernameInput: string, pin: string): Promise<an
     throw error;
   }
 
-  return await updateUser(user.id, {
+  const updates: Record<string, unknown> = {
     failed_login_count: 0,
     locked_until: null,
     last_login_at: nowIso(),
-  }) ?? user;
+  };
+  if (isLegacyCatalogPinHash(String(user.pin_hash ?? ''))) updates.pin_hash = await hashPinServer(pin);
+  const updatedUser = await updateUser(user.id, updates, String(user.pin_hash ?? ''));
+  if (!updatedUser) authFailure('Username hoặc PIN không đúng.');
+  return updatedUser;
 }
 
 async function parseBody(req: AnyRequest): Promise<any> {
@@ -1544,8 +1575,15 @@ async function createUserAccount(user: any, body: any, req: AnyRequest): Promise
   const input = body.input ?? {};
   const username = normalizeUsername(String(input.username ?? ''));
   const initialPin = String(input.initialPin ?? '');
+  const fullName = String(input.fullName ?? '').trim();
+  const role = String(input.role ?? '');
+  const platformCode = String(input.platformCode ?? user.platform_code).trim();
   if (!/^[a-z][a-z0-9._-]{2,29}$/.test(username)) badRequest('Username không hợp lệ (3–30 ký tự, bắt đầu bằng chữ).');
   if (!validPin(initialPin)) badRequest('PIN khởi tạo phải là 4–8 chữ số.');
+  if (!fullName) badRequest('Họ và tên là bắt buộc.');
+  if (!SYSTEM_ACCOUNTS.some((account) => account.role === role)) badRequest('Vai trò không tồn tại trong catalog.');
+  if (!PLATFORMS.some((platform) => platform.code === platformCode)) badRequest('Mã giàn không tồn tại trong catalog.');
+  if (findAccountByUsername(username)) conflictError('Username này đã được định nghĩa trong catalog hệ thống.');
   if (username === normalizeUsername(user.username)) badRequest('Không thể tạo lại chính tài khoản của bạn.');
   if (await getUserByUsername(username)) conflictError('Username đã tồn tại trong danh bạ hệ thống.');
 
@@ -1555,9 +1593,9 @@ async function createUserAccount(user: any, body: any, req: AnyRequest): Promise
     {
       id: newUserId,
       username,
-      full_name: String(input.fullName ?? '').trim(),
-      role: input.role,
-      platform_code: input.platformCode ?? user.platform_code,
+      full_name: fullName,
+      role,
+      platform_code: platformCode,
       email: input.email || null,
       phone: input.phone || null,
       organization: input.organization || null,
