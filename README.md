@@ -3,7 +3,7 @@
 **Hệ thống quản lý Giấy phép Làm việc (Permit To Work - PTW) cho môi trường giàn khoan dầu khí.**
 
 Repository này chứa một ứng dụng web React/TypeScript cùng API serverless trên Vercel và cơ sở dữ liệu PostgreSQL/Supabase. Mục tiêu của phiên bản hiện tại là số hóa vòng đời PTW, RBAC, approval chain, Gas Test, SIMOPS, revision, audit trail và notification, đồng thời đưa authentication và các kiểm tra authorization quan trọng ra khỏi trình duyệt.
-
+Cảnh báo: Không được coi ứng dụng là nguồn thông tin an toàn duy nhất. Danh sách kiểm tra trước khi đưa vào vận hành không thay thế việc tham khảo các nguồn thông tin an toàn có thẩm quyền.
 
 ## 🌐 Demo và repository
 
