@@ -317,7 +317,7 @@ describe('gas test engine', () => {
     expect(
       hasAllRequiredParameters([
         ...makeGasTest().readings,
-        { parameter: 'O2', value: 21, unit: '%v/v' },
+        { parameter: 'O2' as const },
       ]),
     ).toBe(true);
   });
@@ -388,9 +388,9 @@ describe('approval rule engine', () => {
   });
 
   it.each([
-    ['LOW', ['LINE_SUPERVISOR', 'FPS'], 'ROUTINE-LOW'],
-    ['MEDIUM', ['LINE_SUPERVISOR', 'FPS', 'DEPUTY_OIM'], 'MEDIUM'],
-    ['HIGH', ['LINE_SUPERVISOR', 'FPS', 'DEPUTY_OIM', 'OIM'], 'HIGH-RISK'],
+    ['LOW', ['LINE_SUPERVISOR', 'FPS']],
+    ['MEDIUM', ['LINE_SUPERVISOR', 'FPS', 'DEPUTY_OIM']],
+    ['HIGH', ['LINE_SUPERVISOR', 'FPS', 'DEPUTY_OIM', 'OIM']],
   ] as const)('builds the expected chain for %s risk', (riskLevel, expectedLevels) => {
     const { chain } = buildApprovalChain({
       permitType: 'COLD_WORK',
