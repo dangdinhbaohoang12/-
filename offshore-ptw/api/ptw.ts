@@ -8,6 +8,7 @@ import {
 import { buildApprovalChain } from '../src/engine/approvalRuleEngine.js';
 import {
   GAS_SPECS,
+  canRecordGasTest,
   computeOverallResult,
   evaluateReading,
   hasAllRequiredParameters,
@@ -1285,7 +1286,7 @@ async function addGasTest(user: any, body: any, req: AnyRequest): Promise<void> 
   ensurePermission(user.role as Role, 'ADD_GAS_TEST');
   await ensurePin(user, String(body.pin ?? ''));
 
-  if (TERMINAL_STATUSES.includes(current.permit.status)) {
+  if (!canRecordGasTest(current.permit)) {
     badRequest('Permit đã ở trạng thái kết thúc – không thể ghi nhận gas test.');
   }
 
