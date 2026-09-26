@@ -86,7 +86,9 @@ beforeEach(() => {
       }
       const id = url.searchParams.get('id')?.slice(3);
       if (init?.method === 'PATCH') {
-        const user = userRows.find((row) => row.id === id);
+        const expectedPinHash = url.searchParams.get('pin_hash')?.slice(3);
+        const user = userRows.find((row) =>
+          row.id === id && (expectedPinHash === undefined || row.pin_hash === expectedPinHash));
         if (user) Object.assign(user, JSON.parse(String(init.body)));
         return Response.json(user ? [user] : []);
       }
@@ -174,6 +176,24 @@ describe('server controlled security evidence', () => {
     expect(transactions[0].path).toBe('/rest/v1/rpc/ptw_reserve_auth_attempt');
     expect(userRows[0].failed_login_count).toBe(0);
     expect(userRows[0].locked_until).toBeNull();
+  });
+
+  it('rejects LOGIN when the conditional legacy PIN upgrade finds a changed hash', async () => {
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/ptw_users') && init?.method === 'PATCH') {
+        const id = url.searchParams.get('id')?.slice(3);
+        const user = userRows.find((row) => row.id === id);
+        if (user) user.pin_hash = 'changed-by-concurrent-request';
+      }
+      return originalFetch(input, init);
+    }));
+
+    const response = await post({ operation: 'LOGIN', username: 'oim', pin: operatorPin });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error).toContain('Username hoặc PIN không đúng');
   });
 
   it('keeps the invalid LOGIN response after reserving the attempt', async () => {
