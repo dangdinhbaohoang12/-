@@ -2,19 +2,19 @@
 
 **Hệ thống quản lý Giấy phép Làm việc (Permit To Work - PTW) cho môi trường giàn khoan dầu khí.**
 
-Ứng dụng web tập trung vào việc số hóa vòng đời PTW, kiểm soát phân quyền theo vai trò, chuỗi phê duyệt, kiểm tra khí, SIMOPS, audit trail và các trạng thái vận hành của giấy phép.
+Repository này chứa một ứng dụng web React/TypeScript cùng API serverless trên Vercel và cơ sở dữ liệu PostgreSQL/Supabase. Mục tiêu của phiên bản hiện tại là số hóa vòng đời PTW, RBAC, approval chain, Gas Test, SIMOPS, revision, audit trail và notification, đồng thời đưa authentication và các kiểm tra authorization quan trọng ra khỏi trình duyệt.
 
-> ⚠️ **Lưu ý quan trọng:** Phiên bản hiện tại là một ứng dụng frontend/prototype mô phỏng nghiệp vụ. Dữ liệu và xác thực hiện được xử lý phía trình duyệt, vì vậy **không nên sử dụng trực tiếp làm hệ thống PTW production hoặc nguồn dữ liệu an toàn duy nhất** nếu chưa triển khai backend, cơ chế xác thực và lưu trữ server-side phù hợp.
+> ⚠️ **Lưu ý an toàn:** Đây là phần mềm mô phỏng/nghiệm thu nghiệp vụ và **không tự động trở thành hệ thống PTW production hoặc nguồn dữ liệu an toàn duy nhất** chỉ vì đã có backend. Trước khi sử dụng thực tế phải triển khai, kiểm định, cấu hình và phê duyệt theo quy trình HSE/IT của đơn vị vận hành. Các ngưỡng Gas Test và workflow trong mã nguồn là cấu hình của repository, không phải tuyên bố rằng chúng phù hợp cho mọi giàn hoặc quy chuẩn.
 
-## 🌐 Demo
+## 🌐 Demo và repository
 
-**Ứng dụng đang triển khai:**
+**Ứng dụng triển khai hiện tại:**
 
-[https://offshore-ptw.vercel.app/#/login](https://offshore-ptw.vercel.app/#/login)
+https://offshore-ptw.vercel.app/#/login
 
-**Kho lưu trữ:**
+**Repository:**
 
-[https://github.com/dangdinhbaohoang12/quan-ly-gian](https://github.com/dangdinhbaohoang12/quan-ly-gian)
+https://github.com/dangdinhbaohoang12/quan-ly-gian
 
 ---
 
@@ -22,37 +22,31 @@
 
 ### 📊 Dashboard
 
-Dashboard là trung tâm theo dõi PTW của ca trực, bao gồm:
+Dashboard theo dõi các PTW đang hoạt động và các cảnh báo nghiệp vụ, bao gồm:
 
-- Số lượng permit đang hoạt động.
-- Permit đang chờ phê duyệt.
-- Permit sắp hết hạn trong vòng 60 phút.
-- Permit có Gas Test thất bại.
+- Permit đang hoạt động, đang chờ duyệt và sắp hết hạn.
+- Permit có Gas Test không đạt.
 - Xung đột SIMOPS.
-- Danh sách permit đang hoạt động và đang chờ duyệt.
-- Hoạt động gần đây từ Audit Trail.
-- QR code phục vụ kiểm tra/đối chiếu tại hiện trường.
-- Tìm kiếm nhanh theo số permit, khu vực, thiết bị hoặc nội dung công việc.
+- Danh sách permit và hoạt động gần đây.
+- Audit Trail.
+- QR code để đối chiếu tại hiện trường.
+- Tìm kiếm theo số permit, khu vực, thiết bị hoặc nội dung công việc.
 
 ### 📝 Tạo và quản lý PTW
 
-Màn hình tạo PTW hỗ trợ:
+Màn hình PTW hỗ trợ:
 
-- Sinh tự động số permit theo dạng `PLATFORM-PTW-YYYY-NNNNN`.
-- Chọn giàn/platform, khu vực và thiết bị.
-- Chọn loại permit.
-- Khai báo mức độ rủi ro.
-- Khai báo nội dung và lý do phát hành.
-- Khai báo thời gian dự kiến bắt đầu/kết thúc.
-- Checklist an toàn theo từng loại permit.
-- Preview xung đột SIMOPS ngay trong lúc lập permit.
-- Chỉnh sửa bản nháp trước khi gửi vào workflow.
+- Sinh số permit tự động theo dữ liệu catalog.
+- Chọn platform, area, equipment và loại permit.
+- Khai báo risk level, priority, mô tả công việc và lý do phát hành.
+- Khai báo planned start/end.
+- Checklist an toàn theo từng permit type.
+- Kiểm tra SIMOPS khi lập permit.
+- Lưu và chỉnh sửa draft trong các trạng thái được phép.
 
 ### 🔄 Workflow và Approval Chain
 
-Workflow được quản lý bằng state machine thay vì cho phép UI tự thay đổi trạng thái.
-
-Luồng điển hình:
+Trạng thái được kiểm soát bởi workflow/state machine và approval rule engine:
 
 ```text
 DRAFT
@@ -67,20 +61,17 @@ DEPUTY OIM REVIEW
   ↓
 OIM REVIEW
   ↓
-APPROVED / ISSUED
+APPROVED
   ↓
 WORK IN PROGRESS
-  ├──→ SUSPENDED
-  │      ↓
-  │   RESUMED / WORK IN PROGRESS
-  │
+  ├──→ SUSPENDED → RESUMED
   ↓
 WORK COMPLETED
   ↓
 CLOSED
 ```
 
-Ngoài luồng chính, hệ thống còn hỗ trợ:
+Ngoài luồng chính còn có:
 
 ```text
 RETURNED
@@ -89,24 +80,13 @@ CANCELLED
 EXPIRED
 ```
 
-Chuỗi phê duyệt được tạo từ rule engine dựa trên các thuộc tính như:
+Approval chain được sinh từ rule engine dựa trên các thuộc tính của permit như loại công việc, risk level, khu vực nguy hiểm và critical work.
 
-- Loại permit.
-- Risk level.
-- Khu vực nguy hiểm.
-- Critical work.
-- Work classification.
-- Điều kiện đặc biệt được engine hỗ trợ.
+### 👥 RBAC
 
-Điều này cho phép số lượng cấp duyệt thay đổi theo rule thay vì cố định cứng một workflow duy nhất.
+Repository định nghĩa 8 role:
 
----
-
-## 👥 RBAC - Phân quyền
-
-Hệ thống định nghĩa các vai trò:
-
-| Vai trò | Ý nghĩa |
+| Role | Ý nghĩa |
 |---|---|
 | `OIM` | Giàn trưởng |
 | `DEPUTY_OIM` | Giàn phó |
@@ -119,48 +99,41 @@ Hệ thống định nghĩa các vai trò:
 
 Nguyên tắc chính:
 
-- **Default deny:** hành động không có trong permission matrix sẽ bị từ chối.
-- Line Supervisor chỉ có quyền **recommend**, không thay cấp trên để `APPROVE`.
-- Administrator không được dùng quyền quản trị để bypass nghiệp vụ approval.
-- Quyền hiển thị trên UI được kết hợp với kiểm tra workflow trước khi thực thi action.
-- Hành động nghiệp vụ quan trọng yêu cầu xác thực bằng PIN của tài khoản.
+- Default deny cho action không được cấp.
+- Line Supervisor chỉ thực hiện recommendation theo permission matrix, không thay thế cấp duyệt cuối.
+- Administrator không được dùng quyền quản trị để bypass approval nghiệp vụ.
+- UI chỉ là lớp UX/defense-in-depth; backend mới là ranh giới authorization đáng tin cậy.
 
----
+### ⛽ Gas Test Engine
 
-## ⛽ Gas Test Engine
+Các permit yêu cầu Gas Test được đánh giá từ số đo thực tế gồm:
 
-Các permit yêu cầu đo khí được kiểm tra theo dữ liệu đo thay vì chỉ nhập `PASS/FAIL`.
-
-Bốn thông số bắt buộc:
-
-| Thông số | Đơn vị | Ngưỡng hiện tại trong engine |
+| Thông số | Đơn vị | Ngưỡng đang cấu hình |
 |---|---|---|
-| O₂ | `%v/v` | `19.5` – `23.5` |
-| LEL | `%LEL` | `0` – `< 10` |
-| H₂S | `ppm` | `< 5` |
-| CO | `ppm` | `< 25` |
+| O₂ | `%v/v` | 19.5 – 23.5 |
+| LEL | `%LEL` | 0 – <10 |
+| H₂S | `ppm` | <5 |
+| CO | `ppm` | <25 |
 
-Một Gas Test chỉ được xem là hợp lệ khi:
+Một Gas Test hợp lệ phải:
 
-1. Có đủ O₂, LEL, H₂S và CO.
-2. Tất cả các phép đo đều đạt.
-3. Thiết bị đo còn hạn hiệu chuẩn tại thời điểm đo.
-4. Phép đo nằm trong khoảng thời gian hiệu lực của hệ thống (mặc định 60 phút khi kiểm tra phát hành/tái phát hành).
+1. Có đủ bốn phép đo.
+2. Tất cả phép đo đạt.
+3. Detector còn hạn calibration.
+4. Nằm trong khoảng hiệu lực mà engine yêu cầu.
 
-> ⚠️ Các ngưỡng trên là **giá trị cấu hình hiện có trong mã nguồn**, không phải tuyên bố về tiêu chuẩn áp dụng cho mọi giàn/khu vực. Khi triển khai thực tế cần đối chiếu với quy trình HSE, permit procedure và tiêu chuẩn của đơn vị vận hành.
+Các ngưỡng trên lấy từ `src/engine/gasTestEngine.ts`/catalog hiện tại và phải được đối chiếu với quy trình chính thức trước khi dùng ngoài môi trường test.
 
----
+### ⚠️ SIMOPS
 
-## ⚠️ SIMOPS Conflict Engine
+Engine SIMOPS phát hiện công việc đồng thời dựa trên:
 
-Hệ thống có engine phát hiện **SIMOPS (Simultaneous Operations)** dựa trên:
+- Platform.
+- Area.
+- Khoảng thời gian overlap.
+- Compatibility matrix giữa permit types.
 
-- Cùng platform.
-- Cùng area.
-- Thời gian công việc bị chồng lấn.
-- Ma trận tương thích giữa các loại permit.
-
-Mức độ xung đột:
+Mức xung đột:
 
 ```text
 NONE
@@ -169,19 +142,11 @@ WARNING
 BLOCK
 ```
 
-Đặc biệt:
+Conflict `BLOCK` phải được xử lý/acknowledge theo workflow trước khi tiếp tục.
 
-- Xung đột `BLOCK` phải được đánh giá và ghi nhận trước khi submit.
-- Mã xung đột được tạo theo cách deterministic để có thể acknowledge ổn định.
-- Permit đã bị thay thế bởi revision mới không tiếp tục được tính như permit đang hoạt động.
+### 🔁 Revision Management
 
----
-
-## 🔁 Revision Management
-
-Permit đã phát hành không được sửa trực tiếp như một bản nháp.
-
-Hệ thống hỗ trợ:
+Permit đã phát hành không sửa trực tiếp như draft. Revision được tạo theo chuỗi:
 
 ```text
 Issued Permit
@@ -193,87 +158,177 @@ Create New Revision
 Re-approval
 ```
 
-Mỗi revision có thể giữ lại:
+Revision giữ số revision, lý do, người tạo, thời gian, snapshot và liên kết giữa bản cũ/bản mới.
 
-- Số revision.
-- Lý do revision.
-- Người tạo.
-- Thời điểm tạo.
-- Snapshot của bản permit trước đó.
-- Liên kết giữa revision mới và permit đã bị thay thế.
+### 🧾 Audit Trail
 
-Mục tiêu là bảo toàn lịch sử thay đổi thay vì ghi đè dữ liệu permit cũ.
+Các thay đổi nghiệp vụ được ghi vào lịch sử trạng thái/audit với dữ liệu như:
 
----
-
-## 🧾 Audit Trail
-
-Mỗi thay đổi workflow được ghi lại trong `statusHistory`.
-
-Audit entry có thể chứa:
-
-- Sequence.
+- Sequence và event type.
 - Trạng thái trước/sau.
-- Loại sự kiện.
-- Người thực hiện.
-- Vai trò.
-- Action.
+- User, role và action.
 - Comment.
 - Device IP.
-- Old values / New values.
+- Old/New values.
 - Timestamp.
 
-UI có màn hình hiển thị Audit Trail dưới dạng nhật ký phục vụ việc truy vết.
+Backend lưu audit record theo hướng append-only và thực hiện mutation nghiệp vụ cùng audit/notification theo transaction phù hợp.
+
+### 🔔 Notifications
+
+Các sự kiện PTW có notification tương ứng, gồm submit, chờ duyệt, return, reject, approve, sắp hết hạn, hết hạn, suspend/resume, cancel, hoàn thành/đóng, SIMOPS conflict, Gas Test fail và calibration due.
 
 ---
 
-## 🔐 Chữ ký điện tử trong prototype
+## 🔐 Kiến trúc bảo mật hiện tại
 
-Các action quan trọng sử dụng PIN của tài khoản để tạo `signatureHash`.
+Phiên bản mới **không còn coi browser là trusted authorization hoặc credential boundary**.
 
-Mục đích của cơ chế này trong prototype là:
+### Frontend
 
-- Xác nhận người thực hiện action.
-- Gắn chữ ký vào bước phê duyệt.
-- Cho phép truy vết người đã ký.
-- Kết hợp với thông tin thời gian và thiết bị.
-
-**Không nên coi đây là cơ chế chữ ký điện tử production.** Trong phiên bản hiện tại, dữ liệu xác thực và logic hashing tồn tại trong frontend/public source. Hệ thống production cần chuyển xác thực, secret/pepper, authorization và audit integrity sang backend đáng tin cậy.
-
----
-
-## 🔔 Notifications
-
-Store hỗ trợ notification theo các sự kiện PTW như:
-
-- PTW mới được submit.
-- Đang chờ phê duyệt.
-- PTW bị trả về.
-- PTW bị từ chối.
-- PTW được phê duyệt.
-- Sắp hết hạn.
-- Hết hạn.
-- Đình chỉ / tiếp tục.
-- Hủy.
-- Hoàn thành / đóng.
-- SIMOPS conflict.
-- Gas Test thất bại.
-- Calibration đến hạn.
-
----
-
-## 🧭 Các trang chính
+Ứng dụng React/TypeScript dùng Zustand để quản lý state tạm thời và gọi API tại:
 
 ```text
-/login
-/
- /permits
- /permits/new
- /permits/:id
- /users
+/api/ptw
 ```
 
-Trong đó:
+Frontend không nên được xem là nguồn sự thật cuối cùng cho:
+
+- Authentication.
+- Authorization.
+- PIN verification.
+- Workflow transition.
+- Permit persistence.
+- Audit integrity.
+
+### Backend
+
+API chính nằm tại:
+
+```text
+offshore-ptw/api/ptw.ts
+```
+
+Backend:
+
+- Xác thực đăng nhập.
+- Tạo/kiểm tra session HttpOnly.
+- Đọc dữ liệu authoritative từ PostgreSQL/Supabase.
+- Thực hiện server-side RBAC và ownership checks.
+- Re-verify PIN cho mutation nghiệp vụ cần người dùng xác nhận.
+- Chạy lại workflow, approval, Gas Test và SIMOPS rules trước khi ghi.
+- Ghi permit, audit và notification theo transaction phù hợp.
+
+Các mutation PTW chính gồm:
+
+```text
+CREATE_DRAFT
+UPDATE_DRAFT
+TRANSITION
+ADD_GAS_TEST
+ACK_SIMOPS
+REQUEST_REVISION
+REFRESH_EXPIRIES
+```
+
+Account và notification mutation dùng các query/RPC riêng.
+
+### Authentication hardening
+
+Backend hiện hỗ trợ các cơ chế:
+
+- Session cookie HttpOnly, có ký.
+- Đếm login failure ở server.
+- Khóa tài khoản sau 5 lần thất bại liên tiếp trong 15 phút.
+- Thay đổi PIN hoặc disable account làm tăng `session_version` để vô hiệu session cũ.
+- PIN legacy từ catalog chỉ dùng cho migration; login thành công có thể được nâng cấp sang hash server-side `scrypt$v1`.
+- Không yêu cầu các biến `BOOTSTRAP_OIM_*` cũ.
+
+> Không đưa `SUPABASE_SERVICE_ROLE_KEY`, session secret, audit secret hoặc secret server-only vào biến `VITE_*`.
+
+---
+
+## 🗃️ Catalog và dữ liệu cấu hình
+
+File trung tâm:
+
+```text
+offshore-ptw/src/data/catalog.ts
+```
+
+Catalog hiện chứa dữ liệu cấu hình cho:
+
+- Platforms.
+- Areas.
+- Equipment.
+- Permit types.
+- Checklist.
+- System accounts.
+
+Danh sách `SYSTEM_ACCOUNTS` là nguồn bootstrap tài khoản hệ thống. Khi database chưa có tài khoản catalog, backend có thể reconcile tài khoản còn thiếu trong quá trình đăng nhập.
+
+**Không đưa PIN thật vào README hoặc tài liệu công khai.**
+
+---
+
+## 🗄️ Database / Supabase
+
+Schema production được quản lý bằng migrations tại:
+
+```text
+offshore-ptw/supabase/migrations/
+```
+
+Các migration hiện tại phải được áp dụng theo thứ tự:
+
+```text
+001_ptw_security.sql
+002_ptw_auth_lockout.sql
+003_ptw_permit_number_revision_unique.sql
+004_ptw_user_transaction.sql
+```
+
+Backend sử dụng service-role key để truy cập các bảng server-owned. Client role không được coi là lớp bảo vệ nghiệp vụ.
+
+### Dữ liệu authoritative
+
+Database lưu các nhóm dữ liệu chính:
+
+```text
+Users
+Permits
+Notifications
+Audit records
+```
+
+Frontend chỉ nhận public/authorized state phù hợp với người dùng hiện tại.
+
+---
+
+## 🔑 Biến môi trường
+
+File mẫu:
+
+```text
+offshore-ptw/.env.example
+```
+
+Các biến server-side chính:
+
+```text
+SUPABASE_URL
+SUPABASE_SERVICE_ROLE_KEY
+PTW_SESSION_SECRET
+PTW_AUDIT_SECRET
+```
+
+Các secret phải được tạo bằng giá trị ngẫu nhiên đủ dài và chỉ cấu hình trong môi trường server/Vercel.
+
+---
+
+## 🧭 Các route chính
+
+Ứng dụng hiện dùng HashRouter:
 
 | Route | Mục đích |
 |---|---|
@@ -282,9 +337,9 @@ Trong đó:
 | `/permits` | Danh sách PTW |
 | `/permits/new` | Tạo PTW |
 | `/permits/:id` | Chi tiết PTW |
-| `/users` | Quản lý tài khoản |
+| `/users` | Quản lý người dùng |
 
-Ứng dụng sử dụng **HashRouter**, vì vậy các route khi deploy dạng static có dạng:
+URL triển khai tương ứng:
 
 ```text
 https://offshore-ptw.vercel.app/#/login
@@ -292,73 +347,65 @@ https://offshore-ptw.vercel.app/#/login
 
 ---
 
-## 🏗️ Kiến trúc
+## 🏗️ Cấu trúc thư mục
 
-Thư mục ứng dụng chính:
+Cấu trúc quan trọng hiện tại:
 
 ```text
-offshore-ptw/
-├── src/
-│   ├── components/
-│   │   ├── layout/
-│   │   ├── permit/
-│   │   └── ui/
-│   ├── data/
-│   │   └── catalog.ts
-│   ├── engine/
-│   │   ├── approvalRuleEngine.ts
-│   │   ├── gasTestEngine.ts
-│   │   ├── rbacMatrix.ts
-│   │   ├── simopsEngine.ts
-│   │   └── workflowStateMachine.ts
-│   ├── lib/
-│   ├── pages/
-│   │   ├── DashboardPage.tsx
-│   │   ├── LoginPage.tsx
-│   │   ├── PermitDetailPage.tsx
-│   │   ├── PermitFormPage.tsx
-│   │   ├── PermitListPage.tsx
-│   │   └── UsersAdminPage.tsx
-│   ├── services/
-│   │   └── authorizationService.ts
-│   ├── store/
-│   │   └── ptwStore.ts
-│   ├── types/
-│   │   └── domain.ts
-│   ├── App.tsx
-│   ├── index.css
-│   └── main.tsx
-├── package.json
-├── package-lock.json
-├── tsconfig.json
-└── vite.config.ts
+quan-ly-gian/
+├── .github/
+│   └── workflows/
+│       ├── ci.yml
+│       └── auto-merge.yml
+├── offshore-ptw/
+│   ├── api/
+│   │   ├── ptw.ts
+│   │   └── *.test.ts
+│   ├── src/
+│   │   ├── components/
+│   │   ├── data/
+│   │   │   └── catalog.ts
+│   │   ├── engine/
+│   │   │   ├── approvalRuleEngine.ts
+│   │   │   ├── gasTestEngine.ts
+│   │   │   ├── rbacMatrix.ts
+│   │   │   ├── simopsEngine.ts
+│   │   │   └── workflowStateMachine.ts
+│   │   ├── pages/
+│   │   ├── services/
+│   │   ├── store/
+│   │   │   ├── apiClient.ts
+│   │   │   └── ptwStore.ts
+│   │   └── types/
+│   │       └── domain.ts
+│   ├── supabase/
+│   │   └── migrations/
+│   ├── .env.example
+│   ├── SECURITY_DEPLOYMENT.md
+│   ├── package.json
+│   ├── vercel.json
+│   ├── vite.config.ts
+│   └── tsconfig*.json
+└── README.md
 ```
 
-### Các lớp chính
+### Các file nên đọc đầu tiên
 
-**`types/`**  
-Định nghĩa domain model, role, action, permit status, approval step, notification và audit entry.
-
-**`engine/`**  
-Chứa business rules quan trọng:
-
-- `rbacMatrix.ts` - permission matrix.
-- `approvalRuleEngine.ts` - sinh approval chain.
-- `workflowStateMachine.ts` - chuyển trạng thái PTW.
-- `gasTestEngine.ts` - tính toán và kiểm tra gas test.
-- `simopsEngine.ts` - phát hiện xung đột công việc đồng thời.
-
-**`services/`**  
-Tầng authorization giúp UI xác định action nào thực sự khả dụng với user và permit hiện tại.
-
-**`store/`**  
-Zustand store quản lý user, permit, notification và các thao tác nghiệp vụ.
-
-**`pages/`**  
-Các màn hình ứng dụng.
-
-**`components/permit/`**  
-Các thành phần dùng chung cho approval, gas test, SIMOPS và audit trail.
+```text
+src/types/domain.ts
+src/data/catalog.ts
+src/engine/rbacMatrix.ts
+src/engine/approvalRuleEngine.ts
+src/engine/workflowStateMachine.ts
+src/engine/gasTestEngine.ts
+src/engine/simopsEngine.ts
+src/services/authorizationService.ts
+src/store/apiClient.ts
+src/store/ptwStore.ts
+api/ptw.ts
+SECURITY_DEPLOYMENT.md
+supabase/migrations/
+```
 
 ---
 
@@ -367,19 +414,21 @@ Các thành phần dùng chung cho approval, gas test, SIMOPS và audit trail.
 | Công nghệ | Vai trò |
 |---|---|
 | React 19 | UI |
-| TypeScript | Type safety |
-| Vite 6 | Build/dev server |
+| TypeScript 7 | Type safety |
+| Vite 6 | Frontend build/dev |
 | React Router 7 | Routing |
 | Zustand 5 | State management |
 | Tailwind CSS 4 | Styling |
-| Vitest 5 | Unit/critical tests |
-| CryptoJS | Hashing trong prototype |
-| `qrcode.react` | QR code |
-| Node.js 22.x | Runtime yêu cầu của package |
+| Vitest 5 | Unit/API tests |
+| CryptoJS | Compatibility/migration hashing trong catalog |
+| QRCode React | QR code |
+| Node.js 22.x | Runtime yêu cầu |
+| Vercel | Frontend + serverless API deployment |
+| Supabase/PostgreSQL | Authoritative database |
 
 ---
 
-## 🚀 Cài đặt local
+## 🚀 Chạy local
 
 ### 1. Clone repository
 
@@ -394,37 +443,51 @@ cd quan-ly-gian/offshore-ptw
 npm ci
 ```
 
-### 3. Chạy development server
+### 3. Cấu hình môi trường server
+
+Copy giá trị mẫu từ `.env.example` và cấu hình các biến server-side trong môi trường local/Vercel.
+
+### 4. Chạy API local
+
+API là Vercel serverless function, vì vậy `npm run dev` **chỉ khởi động Vite** và không tự thực thi `api/ptw.ts`.
+
+Để chạy đầy đủ frontend + API:
 
 ```bash
-npm run dev
+npm i -g vercel
+vercel dev
 ```
 
-Sau đó mở địa chỉ Vite hiển thị trong terminal, thường là:
+Mặc định Vercel dev chạy ở `http://localhost:3000`. Vite đã được cấu hình proxy `/api` tới host này.
 
-```text
-http://localhost:5173
+Có thể đổi target bằng:
+
+```bash
+PTW_API_PROXY_TARGET=http://localhost:3001
 ```
 
-### 4. Kiểm tra type
+### 5. Kiểm tra type
 
 ```bash
 npm run typecheck
+npm run typecheck:api
 ```
 
-### 5. Chạy test
+### 6. Chạy test
 
 ```bash
 npm test
 ```
 
-### 6. Build production
+### 7. Build
 
 ```bash
 npm run build
 ```
 
-### 7. Preview build
+Build sẽ chạy typecheck frontend, typecheck API rồi mới build Vite.
+
+### 8. Preview
 
 ```bash
 npm run preview
@@ -434,9 +497,7 @@ npm run preview
 
 ## ✅ CI/CD
 
-Repository có GitHub Actions workflow kiểm tra chất lượng mã nguồn.
-
-Workflow CI hiện chạy:
+Workflow CI:
 
 ```text
 npm ci
@@ -448,154 +509,169 @@ npm run typecheck
 npm run build
 ```
 
-CI chạy trên `ubuntu-latest` với Node.js 22 và lưu thư mục build `offshore-ptw/dist` thành artifact.
+CI chạy trên `ubuntu-latest` với Node.js 22 và lưu `offshore-ptw/dist` thành artifact.
 
-Workflow nằm tại:
+File workflow:
 
 ```text
 .github/workflows/ci.yml
 ```
 
-Repository cũng chứa workflow tự động xử lý điều kiện auto-merge ở:
+Repository cũng có workflow Final Gate/Auto-Merge:
 
 ```text
 .github/workflows/auto-merge.yml
 ```
 
----
-
-## 🌍 Deploy
-
-Ứng dụng được thiết kế để deploy dạng static frontend và hiện đang được triển khai trên Vercel.
-
-### Build command
-
-```bash
-npm run build
-```
-
-### Output
-
-```text
-offshore-ptw/dist
-```
-
-Khi deploy, project root cần trỏ vào thư mục:
-
-```text
-offshore-ptw
-```
-
-Do ứng dụng sử dụng `HashRouter`, không cần cấu hình rewrite server cho các route nội bộ.
+Workflow này kiểm tra các điều kiện merge trước khi bật Auto-Merge theo cấu hình repository; đây là CI/repository automation, không thay thế authorization của ứng dụng PTW.
 
 ---
 
-## ⚠️ Giới hạn hiện tại
+## 🌍 Deploy Vercel
 
-Phiên bản hiện tại phù hợp cho **prototype, mô phỏng nghiệp vụ, UI validation và development**.
+Vercel nên đặt:
 
-Một số điểm cần nâng cấp trước khi sử dụng production:
+```text
+Project Root = offshore-ptw
+Build Command = npm run build
+Output Directory = dist
+```
 
-- Đưa authentication và authorization sang backend.
-- Không lưu state nghiệp vụ quan trọng chỉ trong browser `localStorage`.
-- Lưu audit log ở server/database có kiểm soát integrity.
-- Không để secret/pepper dùng cho xác thực trong public frontend source.
-- Thực hiện server-side enforcement cho mọi workflow transition.
-- Đồng bộ dữ liệu giữa nhiều người dùng và nhiều thiết bị.
-- Bổ sung cơ chế session/token, timeout và revoke.
-- Bổ sung cơ chế phân quyền server-side độc lập với UI.
-- Kiểm soát thiết bị, IP và mạng LAN ở tầng backend/network.
-- Có database thật thay cho state trong trình duyệt.
-- Bổ sung backup, recovery, monitoring và logging tập trung.
-- Đánh giá lại tất cả quy tắc HSE/approval/gas test theo quy trình chính thức của đơn vị vận hành.
+API serverless:
+
+```text
+api/ptw.ts
+```
+
+Cấu hình function hiện tại đặt thời gian tối đa 15 giây trong `vercel.json`.
+
+Vì frontend dùng HashRouter, các route UI không cần server rewrite riêng.
+
+### Trình tự triển khai database
+
+Trước khi bật backend production, áp dụng migrations từ `supabase/migrations/` theo đúng thứ tự được mô tả trong phần Database.
+
+Chi tiết security/deployment:
+
+[SECURITY_DEPLOYMENT.md](offshore-ptw/SECURITY_DEPLOYMENT.md)
+
+---
+
+## 🔄 Migration dữ liệu từ bản cũ
+
+Bản backend authoritative bắt đầu với database riêng. Dữ liệu cũ đã từng chỉ nằm trong browser (localStorage/IndexedDB) **không tự động xuất hiện trong database mới**.
+
+Nếu repository trước đây đã có dữ liệu thật trên browser, cần:
+
+```text
+Export browser data
+      ↓
+Transform / re-hash / reconcile IDs
+      ↓
+Import users
+      ↓
+Import permits
+      ↓
+Import notifications
+      ↓
+Validate counts + IDs + unread state
+      ↓
+Migrate traffic
+```
+
+Không nên chuyển hệ thống có dữ liệu đang dùng sang database mới mà bỏ qua bước kiểm tra migration.
+
+Chi tiết nằm trong [SECURITY_DEPLOYMENT.md](offshore-ptw/SECURITY_DEPLOYMENT.md).
 
 ---
 
 ## 🧪 Kiểm thử
 
-Các bài kiểm thử nghiệp vụ quan trọng nằm trong:
+Vitest chạy cả frontend/domain tests và API tests trong:
 
 ```text
-offshore-ptw/src/critical.test.ts
+src/**/*.test.ts
+src/**/*.test.tsx
+api/**/*.test.ts
 ```
 
-Một số nhóm logic được kiểm thử bao gồm:
+Các nhóm kiểm thử quan trọng gồm:
 
-- RBAC.
+- RBAC và authorization boundary.
+- Authentication và lockout.
+- PIN migration/upgrade và race conditions.
 - Workflow transition.
 - Approval chain.
-- Revision.
-- Gas Test.
+- Draft/revision lifecycle.
+- Gas Test validation.
 - SIMOPS.
 - Audit/traceability.
-- Các trường hợp biên của permit lifecycle.
+- API response contract.
+- Vercel handler.
+- ESM/backend import compatibility.
 
-Chạy toàn bộ test:
+Lệnh chuẩn:
 
 ```bash
 npm test
 ```
 
-Chạy test ở chế độ watch:
-
-```bash
-npm run test:watch
-```
-
 ---
 
-## 📚 Mã nguồn quan trọng
+## ⚠️ Giới hạn và yêu cầu trước production
 
-Các file nên đọc đầu tiên khi phát triển dự án:
+Một repository có backend an toàn hơn **không đồng nghĩa** với việc đã đạt mọi yêu cầu của một hệ thống PTW safety-critical.
 
-```text
-src/types/domain.ts
-src/engine/rbacMatrix.ts
-src/engine/approvalRuleEngine.ts
-src/engine/workflowStateMachine.ts
-src/engine/gasTestEngine.ts
-src/engine/simopsEngine.ts
-src/services/authorizationService.ts
-src/store/ptwStore.ts
-```
+Trước production cần đánh giá tối thiểu:
+
+- Backend authorization và database policy trong môi trường thật.
+- Session management, secrets, rotation và incident response.
+- Backup, restore và disaster recovery.
+- Monitoring và centralized logging.
+- Network/security controls phù hợp với môi trường vận hành.
+- Quy trình migration dữ liệu hiện hữu.
+- Quy trình HSE, approval matrix và competency/certification.
+- Ngưỡng Gas Test, SIMOPS và các rule liên quan theo tiêu chuẩn nội bộ.
+- Kiểm thử tải, failure modes, concurrency và offline/network recovery.
+- Phân quyền vận hành ngoài UI, không chỉ dựa vào hidden button.
 
 ---
 
 ## 🤝 Đóng góp
 
-Khi thay đổi logic PTW, đặc biệt là:
+Khi thay đổi logic nghiệp vụ, nên cập nhật test tương ứng.
 
-- workflow,
-- RBAC,
-- approval,
-- gas test,
-- SIMOPS,
-- revision,
-- audit,
-
-nên đồng thời cập nhật test tương ứng.
-
-Mọi thay đổi nghiệp vụ quan trọng cần đảm bảo:
+Đặc biệt cần giữ nguyên ranh giới:
 
 ```text
 UI
  ↓
-Authorization
+Authorization / server validation
  ↓
 Workflow / Engine
  ↓
-State update
+Authoritative state mutation
  ↓
 Audit / Notification
 ```
 
-Không nên chỉ sửa điều kiện hiển thị nút ở UI để giải quyết vấn đề quyền hoặc workflow.
+Không giải quyết vấn đề authorization hoặc workflow chỉ bằng cách ẩn/hiện nút trên frontend.
+
+Pull request nên mô tả rõ:
+
+- Thay đổi nghiệp vụ nào.
+- Thay đổi security boundary nào (nếu có).
+- Test đã chạy.
+- Ảnh hưởng migration/database.
+- Ảnh hưởng backward compatibility.
 
 ---
 
 ## 📄 Giấy phép
 
-Repository hiện chưa khai báo một license mở cụ thể trong README này. Trước khi tái sử dụng hoặc phân phối dự án, hãy kiểm tra và bổ sung license phù hợp cho repository.
+Dự án được phát hành theo **MIT License**. Xem [LICENSE](LICENSE).
+
+MIT License áp dụng cho mã nguồn của repository này trong phạm vi được chủ sở hữu cấp phép. Các thư viện/phụ thuộc bên thứ ba vẫn chịu license riêng của chúng.
 
 ---
 
@@ -603,11 +679,11 @@ Repository hiện chưa khai báo một license mở cụ thể trong README nà
 
 **Đặng Đình Bảo Hoàng**
 
-GitHub: [@dangdinhbaohoang12](https://github.com/dangdinhbaohoang12)
+GitHub: https://github.com/dangdinhbaohoang12
 
 ---
 
 <p align="center">
   <strong>OFFSHORE PTW</strong><br>
-  Safety-Critical Permit To Work Management System
+  Permit To Work Management System
 </p>
