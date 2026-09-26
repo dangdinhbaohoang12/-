@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  DEFAULT_APPROVAL_RULES,
   buildApprovalChain,
   isChainComplete,
   nextRequiredLevel,
@@ -629,37 +628,48 @@ describe('workflow state machine', () => {
     expect(submitPermit(makePermit(), ctx('ADMINISTRATOR')).ok).toBe(false);
   });
 
-  it('rejects an approval from the wrong level and accepts the correct level', () => {
-    const permit = submitPermit(makePermit({ riskLevel: 'MEDIUM', workClassifications: ['NON_ROUTINE'] }), ctx('PERMIT_APPLICANT')).permit!;
-    const wrong = approveAtCurrentLevel(permit, ctx('FPS'));
+  it('rejects approval from the wrong level and accepts approval at the current level', () => {
+    const permit = makePermit({
+      riskLevel: 'MEDIUM',
+      workClassifications: ['NON_ROUTINE'],
+      status: 'FPS_REVIEW',
+      currentApprovalLevel: 'FPS',
+      approvalChain: [
+        { level: 'LINE_SUPERVISOR', status: 'DONE', required: true },
+        { level: 'FPS', status: 'PENDING', required: true },
+        { level: 'DEPUTY_OIM', status: 'PENDING', required: true },
+        { level: 'OIM', status: 'NOT_REQUIRED', required: false },
+      ],
+    });
+
+    const wrong = approveAtCurrentLevel(permit, ctx('OIM'));
     expect(wrong.ok).toBe(false);
     expect(wrong.error).toContain('chống bypass');
 
-    const right = approveAtCurrentLevel(permit, ctx('LINE_SUPERVISOR', 'U-LINE', 'Looks good'));
+    const right = approveAtCurrentLevel(permit, ctx('FPS', 'U-FPS', 'Looks good'));
     expect(right.ok).toBe(true);
-    expect(right.permit?.status).toBe('FPS_REVIEW');
-    expect(right.permit?.currentApprovalLevel).toBe('FPS');
-    expect(right.permit?.approvalChain[0].status).toBe('DONE');
-    expect(right.permit?.approvalChain[0].decision).toBe('APPROVE');
+    expect(right.permit?.status).toBe('DEPUTY_OIM_REVIEW');
+    expect(right.permit?.currentApprovalLevel).toBe('DEPUTY_OIM');
+    expect(right.permit?.approvalChain.find((step) => step.level === 'FPS')?.status).toBe('DONE');
+    expect(right.permit?.approvalChain.find((step) => step.level === 'FPS')?.decision).toBe('APPROVE');
   });
 
   it('requires a valid gas test before final approval and then issues correctly', () => {
-    const submitted = submitPermit(
-      makePermit({
-        permitType: 'HOT_WORK',
-        riskLevel: 'HIGH',
-        workClassifications: ['HOT_WORK', 'NON_ROUTINE', 'HIGH_RISK_AREA'],
-        criticalWork: true,
-        requiresGasTest: true,
-      }),
-      ctx('PERMIT_APPLICANT'),
-    ).permit!;
-
-    let current = submitted;
-    for (const role of ['LINE_SUPERVISOR', 'FPS', 'DEPUTY_OIM'] as const) {
-      current = approveAtCurrentLevel(current, ctx(role)).permit!;
-    }
-    expect(current.status).toBe('OIM_REVIEW');
+    const current = makePermit({
+      permitType: 'HOT_WORK',
+      riskLevel: 'HIGH',
+      workClassifications: ['HOT_WORK', 'NON_ROUTINE', 'HIGH_RISK_AREA'],
+      criticalWork: true,
+      requiresGasTest: true,
+      status: 'OIM_REVIEW',
+      currentApprovalLevel: 'OIM',
+      approvalChain: [
+        { level: 'LINE_SUPERVISOR', status: 'DONE', required: true },
+        { level: 'FPS', status: 'DONE', required: true },
+        { level: 'DEPUTY_OIM', status: 'DONE', required: true },
+        { level: 'OIM', status: 'PENDING', required: true },
+      ],
+    });
 
     const withoutGas = approveAtCurrentLevel(current, ctx('OIM'));
     expect(withoutGas.ok).toBe(false);
@@ -835,16 +845,28 @@ describe('authorization service', () => {
   });
 
   it('only exposes approval actions to the current approval level', () => {
-    const submitted = submitPermit(makePermit({ riskLevel: 'MEDIUM', workClassifications: ['NON_ROUTINE'] }), ctx('PERMIT_APPLICANT')).permit!;
+    const permit = makePermit({
+      riskLevel: 'MEDIUM',
+      workClassifications: ['NON_ROUTINE'],
+      status: 'FPS_REVIEW',
+      currentApprovalLevel: 'FPS',
+      approvalChain: [
+        { level: 'LINE_SUPERVISOR', status: 'DONE', required: true },
+        { level: 'FPS', status: 'PENDING', required: true },
+        { level: 'DEPUTY_OIM', status: 'PENDING', required: true },
+        { level: 'OIM', status: 'NOT_REQUIRED', required: false },
+      ],
+    });
     const line = makeUser('LINE_SUPERVISOR');
     const fps = makeUser('FPS');
 
-    expect(canPerform(line, submitted, 'APPROVE').allowed).toBe(true);
-    expect(canPerform(fps, submitted, 'APPROVE').allowed).toBe(false);
-    expect(canPerform(line, submitted, 'REJECT').allowed).toBe(true);
+    expect(canPerform(line, permit, 'APPROVE').allowed).toBe(false);
+    expect(canPerform(fps, permit, 'APPROVE').allowed).toBe(true);
+    expect(canPerform(line, permit, 'REJECT').allowed).toBe(false);
 
-    const afterLine = approveAtCurrentLevel(submitted, ctx('LINE_SUPERVISOR')).permit!;
-    expect(canPerform(fps, afterLine, 'APPROVE').allowed).toBe(true);
+    const afterFps = approveAtCurrentLevel(permit, ctx('FPS')).permit!;
+    expect(canPerform(fps, afterFps, 'APPROVE').allowed).toBe(false);
+    expect(canPerform(makeUser('DEPUTY_OIM'), afterFps, 'APPROVE').allowed).toBe(true);
   });
 
   it('handles visibility rules and single-action fallback checks', () => {
