@@ -388,8 +388,17 @@ async function insertUser(row: Record<string, unknown>): Promise<any> {
   return rows?.[0] ?? row;
 }
 
-async function updateUser(id: string, patch: Record<string, unknown>): Promise<any> {
-  const rows = await supabase('ptw_users?id=eq.' + encodeURIComponent(id), {
+async function updateUser(
+  id: string,
+  patch: Record<string, unknown>,
+  expectedPinHash?: string,
+): Promise<any> {
+  let path = 'ptw_users?id=eq.' + encodeURIComponent(id);
+  if (expectedPinHash !== undefined) {
+    path += '&pin_hash=eq.' + encodeURIComponent(expectedPinHash);
+  }
+
+  const rows = await supabase(path, {
     method: 'PATCH',
     body: JSON.stringify(patch),
   });
@@ -677,7 +686,7 @@ async function authenticateLogin(usernameInput: string, pin: string): Promise<an
     last_login_at: nowIso(),
   };
   if (isLegacyCatalogPinHash(String(user.pin_hash ?? ''))) updates.pin_hash = await hashPinServer(pin);
-  return await updateUser(user.id, updates) ?? user;
+  return await updateUser(user.id, updates, String(user.pin_hash ?? '')) ?? user;
 }
 
 async function parseBody(req: AnyRequest): Promise<any> {
