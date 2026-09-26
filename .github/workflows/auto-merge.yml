@@ -66,7 +66,8 @@ jobs:
           MERGE_METHOD: "SQUASH"
           MAX_CI_WAIT_SECONDS: "900"
           POLL_INTERVAL_SECONDS: "20"
-          MAX_MERGE_STATE_WAIT_SECONDS: "180"
+          # Keep the full attempt below the 40-minute GitHub Actions job timeout.
+          MAX_ATTEMPT_WAIT_SECONDS: "2300"
 
           # These names are taken from .github/workflows/ci.yml.
           REQUIRED_WORKFLOW_NAME: "CI - Build & Test (Offshore PTW)"
@@ -93,6 +94,10 @@ jobs:
 
             const pollIntervalSeconds = Number(
               process.env.POLL_INTERVAL_SECONDS || "20"
+            );
+
+            const maxAttemptWaitSeconds = Number(
+              process.env.MAX_ATTEMPT_WAIT_SECONDS || "2300"
             );
 
             const requiredWorkflowName =
@@ -351,15 +356,10 @@ jobs:
               return data.repository.pullRequest;
             }
 
-            async function waitForMergeableState(prNumber) {
-              const deadline =
-                Date.now() +
-                Math.min(
-                  maxCiWaitSeconds,
-                  120
-                ) *
-                  1000;
-
+            async function waitForMergeableState(
+              prNumber,
+              deadline
+            ) {
               while (Date.now() < deadline) {
                 const pr =
                   await getPullRequestGraphQL(
@@ -374,23 +374,25 @@ jobs:
                   "GitHub chưa xác định trạng thái mergeable. Đang chờ..."
                 );
 
-                await sleep(5000);
+                const remainingMs = deadline - Date.now();
+
+                if (remainingMs <= 0) {
+                  break;
+                }
+
+                await sleep(Math.min(5000, remainingMs));
               }
 
               throw new Error(
-                "GitHub vẫn trả về mergeable=UNKNOWN sau thời gian chờ."
+                "Auto-Merge attempt đã hết deadline khi chờ mergeable state."
               );
             }
 
             async function waitForStableMergeState(
               prNumber,
-              expectedHeadSha
+              expectedHeadSha,
+              deadline
             ) {
-              const deadline =
-                Date.now() +
-                Number(process.env.MAX_MERGE_STATE_WAIT_SECONDS || "180") *
-                  1000;
-
               let lastState = "";
 
               while (Date.now() < deadline) {
@@ -434,12 +436,18 @@ jobs:
                   return prGraph;
                 }
 
-                await sleep(5000);
+                const remainingMs = deadline - Date.now();
+
+                if (remainingMs <= 0) {
+                  break;
+                }
+
+                await sleep(Math.min(5000, remainingMs));
               }
 
               const finalPrGraph = await getPullRequestGraphQL(prNumber);
               throw new Error(
-                "GitHub không ổn định trạng thái merge sau thời gian chờ: mergeStateStatus=" +
+                "Auto-Merge attempt đã hết deadline khi chờ trạng thái merge: mergeStateStatus=" +
                 finalPrGraph.mergeStateStatus +
                 ", mergeable=" +
                 finalPrGraph.mergeable
@@ -511,11 +519,9 @@ jobs:
             }
 
             async function waitForAllCIToSettle(
-              headSha
+              headSha,
+              deadline
             ) {
-              const deadline =
-                Date.now() +
-                maxCiWaitSeconds * 1000;
 
               while (Date.now() < deadline) {
                 const [
@@ -787,13 +793,22 @@ jobs:
                   );
                 }
 
+                const remainingMs = deadline - Date.now();
+
+                if (remainingMs <= 0) {
+                  break;
+                }
+
                 await sleep(
-                  pollIntervalSeconds * 1000
+                  Math.min(
+                    pollIntervalSeconds * 1000,
+                    remainingMs
+                  )
                 );
               }
 
               throw new Error(
-                `CI không hoàn thành trong ${maxCiWaitSeconds} giây.`
+                "Auto-Merge attempt đã hết deadline khi chờ CI."
               );
             }
 
@@ -1067,8 +1082,15 @@ jobs:
               prNodeId,
               headSha,
               prNumber,
+              deadline,
               unstableRetries = 0
             ) {
+              if (Date.now() >= deadline) {
+                throw new Error(
+                  "Auto-Merge attempt đã hết deadline trước khi bật Auto-Merge."
+                );
+              }
+
               try {
                 const result =
                   await github.graphql(
@@ -1130,13 +1152,21 @@ jobs:
 
                   await waitForStableMergeState(
                     prNumber,
-                    headSha
+                    headSha,
+                    deadline
                   );
+
+                  if (Date.now() >= deadline) {
+                    throw new Error(
+                      "Auto-Merge attempt đã hết deadline sau khi chờ trạng thái ổn định."
+                    );
+                  }
 
                   return enableAutoMerge(
                     prNodeId,
                     headSha,
                     prNumber,
+                    deadline,
                     unstableRetries + 1
                   );
                 }
@@ -1157,6 +1187,12 @@ jobs:
                     latestPrGraph.mergeStateStatus === "CLEAN" ||
                     isCleanStatusRejection
                   ) {
+                    if (Date.now() >= deadline) {
+                      throw new Error(
+                        "Auto-Merge attempt đã hết deadline trước khi merge trực tiếp."
+                      );
+                    }
+
                     const mergeResponse =
                       await github.rest.pulls.merge({
                         owner,
@@ -1561,6 +1597,10 @@ jobs:
 
             
             async function main() {
+              const attemptDeadline =
+                Date.now() +
+                maxAttemptWaitSeconds * 1000;
+
               const prNumber =
                 getPullRequestNumber();
 
@@ -1763,7 +1803,8 @@ jobs:
               try {
                 ci =
                   await waitForAllCIToSettle(
-                    currentHeadSha
+                    currentHeadSha,
+                    attemptDeadline
                   );
               } catch (error) {
                 /*
@@ -1890,7 +1931,8 @@ jobs:
                */
               prGraph =
                 await waitForMergeableState(
-                  prNumber
+                  prNumber,
+                  attemptDeadline
                 );
 
               if (prGraph.isDraft) {
@@ -2293,7 +2335,8 @@ jobs:
               prGraph =
                 await waitForStableMergeState(
                   prNumber,
-                  currentHeadSha
+                  currentHeadSha,
+                  attemptDeadline
                 );
 
               if (prGraph.isDraft) {
@@ -2329,7 +2372,8 @@ jobs:
                */
               const finalCi =
                 await waitForAllCIToSettle(
-                  currentHeadSha
+                  currentHeadSha,
+                  attemptDeadline
                 );
 
               if (!finalCi?.requiredCiComplete) {
@@ -2348,7 +2392,8 @@ jobs:
               await enableAutoMerge(
                 prGraph.id,
                 currentHeadSha,
-                prNumber
+                prNumber,
+                attemptDeadline
               );
 
               core.notice(
