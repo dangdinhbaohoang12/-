@@ -693,7 +693,7 @@ describe('workflow state machine', () => {
 
     expect(isPermitFieldLocked(submitted)).toBe(true);
     expect(isPermitFieldLocked(makePermit())).toBe(false);
-    expect(isPermitFieldLocked(makePermit({ status: 'RETURNED' })).toBe(false);
+    expect(isPermitFieldLocked(makePermit({ status: 'RETURNED' }))).toBe(false);
   });
 
   it('supports work lifecycle transitions with permission checks', () => {
