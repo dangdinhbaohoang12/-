@@ -479,18 +479,36 @@ jobs:
                  * These are the repository's actual CI workflow
                  * and job names from .github/workflows/ci.yml.
                  */
+                /*
+                 * Only the repository CI triggered by pull_request is
+                 * authoritative for a PR. A push-triggered run on the
+                 * same SHA must not be counted as PR CI evidence.
+                 */
                 const relevantWorkflowRuns =
                   workflowRuns.filter(
                     run =>
-                      run.name ===
-                      requiredWorkflowName
+                      run.name === requiredWorkflowName &&
+                      run.event === "pull_request"
                   );
 
+                const requiredCheckSuiteIds =
+                  new Set(
+                    relevantWorkflowRuns
+                      .map(run => run.check_suite_id)
+                      .filter(Boolean)
+                  );
+
+                /*
+                 * Only accept the required check from a check suite
+                 * belonging to the authoritative pull_request workflow.
+                 */
                 const relevantCiCheckRuns =
                   relevantCheckRuns.filter(
                     check =>
-                      check.name ===
-                      requiredCheckName
+                      check.name === requiredCheckName &&
+                      requiredCheckSuiteIds.has(
+                        check.check_suite?.id
+                      )
                   );
 
                 const sawRequiredWorkflow =
@@ -675,6 +693,7 @@ jobs:
                     checkRuns:
                       relevantCiCheckRuns,
                     combinedStatus
+                    requiredCiComplete: true,
                   };
                 }
 
@@ -994,12 +1013,9 @@ jobs:
                       ) {
                         enablePullRequestAutoMerge(
                           input: {
-                            pullRequestId:
-                              $pullRequestId
-                            expectedHeadOid:
-                              $expectedHeadOid
-                            mergeMethod:
-                              $mergeMethod
+                            pullRequestId: $pullRequestId
+                            expectedHeadOid: $expectedHeadOid
+                            mergeMethod: $mergeMethod
                           }
                         ) {
                           pullRequest {
@@ -1035,22 +1051,44 @@ jobs:
                 );
               } catch (error) {
                 const message =
-                  error?.message ||
-                  String(error);
+                  error?.message || String(error);
+
+                const isCleanStatusRejection =
+                  /clean status/i.test(message);
+                const isIntegrationPermissionRejection =
+                  /Resource not accessible by integration/i.test(message);
 
                 if (
-                  /Resource not accessible by integration/i.test(
-                    message
-                  )
+                  isCleanStatusRejection ||
+                  isIntegrationPermissionRejection
                 ) {
-                  throw new Error(
-                    [
-                      "GITHUB_TOKEN không có quyền cần thiết để bật Auto-Merge.",
-                      "Workflow này phải có contents: write và pull-requests: write.",
-                      "Vì đây là pull_request_target, quyền được lấy từ workflow trên nhánh đích (main).",
-                      `PR #${prNumber} chưa được bật Auto-Merge. GitHub trả về: ${message}`
-                    ].join(" ")
-                  );
+                  const latestPrGraph =
+                    await getPullRequestGraphQL(prNumber);
+
+                  if (
+                    latestPrGraph.mergeStateStatus === "CLEAN" ||
+                    isCleanStatusRejection
+                  ) {
+                    const mergeResponse =
+                      await github.rest.pulls.merge({
+                        owner,
+                        repo,
+                        pull_number: prNumber,
+                        sha: headSha,
+                        merge_method: mergeMethod.toLowerCase()
+                      });
+
+                    if (!mergeResponse.data.merged) {
+                      throw new Error(
+                        `GitHub không thể merge PR #${prNumber}: ${mergeResponse.data.message || "unknown error"}`
+                      );
+                    }
+
+                    core.notice(
+                      `PR #${prNumber} đã được merge trực tiếp bằng ${mergeMethod} cho SHA ${headSha} vì trạng thái đã CLEAN.`
+                    );
+                    return;
+                  }
                 }
 
                 throw new Error(
@@ -1059,6 +1097,7 @@ jobs:
               }
             }
 
+            
             async function addCommentOnce(
               prNumber,
               marker,
@@ -1341,24 +1380,43 @@ jobs:
               reviews
             ) {
               /*
-               * Preserve the existing behavior:
-               * when every technical gate passes, the
-               * workflow may record its technical approval.
-               *
-               * Bot reviews are ignored by the blocking
-               * human-review logic.
+               * Preserve the existing behavior: the workflow may
+               * record its technical approval after all gates pass.
                */
+              const existingReviews =
+                await github.paginate(
+                  github.rest.pulls.listReviews,
+                  {
+                    owner,
+                    repo,
+                    pull_number: prNumber,
+                    per_page: 100
+                  }
+                );
+
+              const existingBotChangesRequest =
+                existingReviews.find(
+                  review =>
+                    review.user?.login === "github-actions[bot]" &&
+                    review.commit_id === headSha &&
+                    String(review.state || "").toUpperCase() ===
+                      "CHANGES_REQUESTED"
+                );
+
+              if (existingBotChangesRequest) {
+                core.warning(
+                  `Đã có review CHANGES_REQUESTED của github-actions[bot] cho ${headSha}; không tạo review trùng.`
+                );
+                return;
+              }
+
               const existingApproval =
                 reviews.find(
                   review =>
-                    review.user?.login ===
-                      "github-actions[bot]" &&
-                    String(
-                      review.state || ""
-                    ).toUpperCase() ===
+                    review.user?.login === "github-actions[bot]" &&
+                    String(review.state || "").toUpperCase() ===
                       "APPROVED" &&
-                    review.commit_id ===
-                      headSha
+                    review.commit_id === headSha
                 );
 
               if (existingApproval) {
@@ -1378,6 +1436,7 @@ jobs:
               );
             }
 
+            
             async function main() {
               const prNumber =
                 getPullRequestNumber();
@@ -1439,42 +1498,60 @@ jobs:
 
               /*
                * The ready label is an explicit opt-in.
-               * Only an admin may add it.
+               * Only an admin may add it. Always inspect the latest
+               * matching labeled event, regardless of context.eventName.
                */
-              if (
-                context.eventName ===
-                  "pull_request_target" &&
-                context.payload.action ===
-                  "labeled" &&
-                context.payload.label?.name ===
-                  readyLabel
-              ) {
+              if (hasReadyLabel) {
                 try {
-                  const permission =
-                    await github.rest
-                      .repos
-                      .getCollaboratorPermissionLevel(
-                        {
-                          owner,
-                          repo,
-                          username:
-                            context.actor
-                        }
-                      );
-
-                  if (
-                    permission.data
-                      .permission !==
-                    "admin"
-                  ) {
-                    await github.rest.issues
-                      .removeLabel({
+                  const labelEvents =
+                    await github.paginate(
+                      github.rest.issues.listEvents,
+                      {
                         owner,
                         repo,
-                        issue_number:
-                          prNumber,
-                        name: readyLabel
+                        issue_number: prNumber,
+                        per_page: 100
+                      }
+                    );
+
+                  const latestReadyLabelEvent =
+                    labelEvents
+                      .filter(
+                        event =>
+                          event.event === "labeled" &&
+                          event.label?.name === readyLabel
+                      )
+                      .sort(
+                        (a, b) =>
+                          new Date(a.created_at || 0).getTime() -
+                          new Date(b.created_at || 0).getTime()
+                      )
+                      .at(-1);
+
+                  const labelActor =
+                    latestReadyLabelEvent?.actor?.login;
+
+                  if (!labelActor) {
+                    throw new Error(
+                      "Không tìm thấy actor của lần thêm label gần nhất."
+                    );
+                  }
+
+                  const permission =
+                    await github.rest.repos
+                      .getCollaboratorPermissionLevel({
+                        owner,
+                        repo,
+                        username: labelActor
                       });
+
+                  if (permission.data.permission !== "admin") {
+                    await github.rest.issues.removeLabel({
+                      owner,
+                      repo,
+                      issue_number: prNumber,
+                      name: readyLabel
+                    });
 
                     await addCommentOnce(
                       prNumber,
@@ -1482,33 +1559,35 @@ jobs:
                       [
                         `<!-- pr-final-gate:unauthorized-label:${currentHeadSha} -->`,
                         `Nhãn \`${readyLabel}\` chỉ được phép bởi người có quyền quản trị.`,
+                        `Actor thêm label gần nhất: @${labelActor}.`,
                         "Nhãn đã được tự động gỡ."
                       ].join("\n")
                     );
 
+                    hasReadyLabel = false;
                     return;
                   }
+
+                  core.info(
+                    `Label "${readyLabel}" được thêm gần nhất bởi admin @${labelActor}.`
+                  );
                 } catch (error) {
                   core.warning(
                     `Không thể xác minh người thêm label: ${error.message || error}`
                   );
 
-                  if (hasReadyLabel) {
-                    await github.rest.issues
-                      .removeLabel({
-                        owner,
-                        repo,
-                        issue_number:
-                          prNumber,
-                        name: readyLabel
-                      });
-                  }
+                  await github.rest.issues.removeLabel({
+                    owner,
+                    repo,
+                    issue_number: prNumber,
+                    name: readyLabel
+                  });
 
                   return;
                 }
               }
 
-              /*
+              
                * If the label has been removed after a previous
                * run enabled auto-merge, explicitly turn it off.
                */
@@ -1598,30 +1677,36 @@ jobs:
                   const failedWorkflowRuns =
                     workflowRuns.filter(
                       run =>
-                        run.name ===
-                          requiredWorkflowName &&
-                        run.status ===
-                          "completed" &&
+                        run.name === requiredWorkflowName &&
+                        run.event === "pull_request" &&
+                        run.status === "completed" &&
                         !successfulConclusions.has(
-                          String(
-                            run.conclusion ||
-                              ""
-                          ).toLowerCase()
+                          String(run.conclusion || "").toLowerCase()
                         )
+                    );
+
+                  const failedWorkflowCheckSuiteIds =
+                    new Set(
+                      workflowRuns
+                        .filter(
+                          run =>
+                            run.name === requiredWorkflowName &&
+                            run.event === "pull_request"
+                        )
+                        .map(run => run.check_suite_id)
+                        .filter(Boolean)
                     );
 
                   const failedRequiredChecks =
                     checkRuns.filter(
                       check =>
-                        check.name ===
-                          requiredCheckName &&
-                        check.status ===
-                          "completed" &&
+                        check.name === requiredCheckName &&
+                        failedWorkflowCheckSuiteIds.has(
+                          check.check_suite?.id
+                        ) &&
+                        check.status === "completed" &&
                         !successfulConclusions.has(
-                          String(
-                            check.conclusion ||
-                              ""
-                          ).toLowerCase()
+                          String(check.conclusion || "").toLowerCase()
                         )
                     );
 
@@ -2113,6 +2198,23 @@ jobs:
               }
 
               /*
+              /*
+               * Final CI invariant: re-read the required CI evidence
+               * immediately before changing merge state. This guarantees
+               * Auto-Merge is never newly enabled while required CI is
+               * still pending.
+               */
+              const finalCi =
+                await waitForAllCIToSettle(
+                  currentHeadSha
+                );
+
+              if (!finalCi?.requiredCiComplete) {
+                throw new Error(
+                  "CI bắt buộc chưa hoàn tất ở lần kiểm tra cuối; không bật Auto-Merge."
+                );
+              }
+
                * 9. Enable Auto-Merge only.
                *
                * IMPORTANT:
