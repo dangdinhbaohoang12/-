@@ -66,6 +66,7 @@ jobs:
           MERGE_METHOD: "SQUASH"
           MAX_CI_WAIT_SECONDS: "900"
           POLL_INTERVAL_SECONDS: "20"
+          MAX_MERGE_STATE_WAIT_SECONDS: "180"
 
           # These names are taken from .github/workflows/ci.yml.
           REQUIRED_WORKFLOW_NAME: "CI - Build & Test (Offshore PTW)"
@@ -378,6 +379,70 @@ jobs:
 
               throw new Error(
                 "GitHub vẫn trả về mergeable=UNKNOWN sau thời gian chờ."
+              );
+            }
+
+            async function waitForStableMergeState(
+              prNumber,
+              expectedHeadSha
+            ) {
+              const deadline =
+                Date.now() +
+                Number(process.env.MAX_MERGE_STATE_WAIT_SECONDS || "180") *
+                  1000;
+
+              let lastState = "";
+
+              while (Date.now() < deadline) {
+                const [pr, prGraph] = await Promise.all([
+                  getPullRequest(prNumber),
+                  getPullRequestGraphQL(prNumber)
+                ]);
+
+                if (pr.head?.sha !== expectedHeadSha) {
+                  throw new Error(
+                    "HEAD SHA của PR đã thay đổi trước khi trạng thái merge ổn định."
+                  );
+                }
+
+                const mergeable = String(prGraph.mergeable || "").toUpperCase();
+                const mergeStateStatus = String(prGraph.mergeStateStatus || "").toUpperCase();
+
+                if (
+                  mergeable === "MERGEABLE" &&
+                  ["CLEAN", "HAS_HOOKS"].includes(mergeStateStatus)
+                ) {
+                  return prGraph;
+                }
+
+                if (mergeable === "CONFLICTING" || mergeStateStatus === "DIRTY") {
+                  return prGraph;
+                }
+
+                if (mergeStateStatus !== lastState) {
+                  core.info(
+                    "GitHub mergeStateStatus=" +
+                    (mergeStateStatus || "UNKNOWN") +
+                    ", mergeable=" +
+                    (mergeable || "UNKNOWN") +
+                    "; đang chờ trạng thái merge ổn định..."
+                  );
+                  lastState = mergeStateStatus;
+                }
+
+                if (["BLOCKED", "BEHIND", "DRAFT"].includes(mergeStateStatus)) {
+                  return prGraph;
+                }
+
+                await sleep(5000);
+              }
+
+              const finalPrGraph = await getPullRequestGraphQL(prNumber);
+              throw new Error(
+                "GitHub không ổn định trạng thái merge sau thời gian chờ: mergeStateStatus=" +
+                finalPrGraph.mergeStateStatus +
+                ", mergeable=" +
+                finalPrGraph.mergeable
               );
             }
 
@@ -1053,6 +1118,26 @@ jobs:
               } catch (error) {
                 const message =
                   error?.message || String(error);
+
+                const isUnstableStatusRejection =
+                  /pull request is in unstable status|unstable status/i.test(message);
+
+                if (isUnstableStatusRejection) {
+                  core.warning(
+                    "GitHub từ chối Auto-Merge vì mergeStateStatus=UNSTABLE. Đang chờ trạng thái ổn định rồi thử lại."
+                  );
+
+                  await waitForStableMergeState(
+                    prNumber,
+                    headSha
+                  );
+
+                  return enableAutoMerge(
+                    prNodeId,
+                    headSha,
+                    prNumber
+                  );
+                }
 
                 const isCleanStatusRejection =
                   /clean status/i.test(message);
@@ -2204,8 +2289,9 @@ jobs:
                * 8. Final GraphQL state.
                */
               prGraph =
-                await getPullRequestGraphQL(
-                  prNumber
+                await waitForStableMergeState(
+                  prNumber,
+                  currentHeadSha
                 );
 
               if (prGraph.isDraft) {
