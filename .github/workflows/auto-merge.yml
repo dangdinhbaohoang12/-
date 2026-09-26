@@ -56,7 +56,7 @@ jobs:
   final-gate:
     name: Final PR gate
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
 
     steps:
       - name: Evaluate CI, reviews, label, conflicts, and auto-merge
@@ -1066,7 +1066,8 @@ jobs:
             async function enableAutoMerge(
               prNodeId,
               headSha,
-              prNumber
+              prNumber,
+              unstableRetries = 0
             ) {
               try {
                 const result =
@@ -1122,7 +1123,7 @@ jobs:
                 const isUnstableStatusRejection =
                   /pull request is in unstable status|unstable status/i.test(message);
 
-                if (isUnstableStatusRejection) {
+                if (isUnstableStatusRejection && unstableRetries < 3) {
                   core.warning(
                     "GitHub từ chối Auto-Merge vì mergeStateStatus=UNSTABLE. Đang chờ trạng thái ổn định rồi thử lại."
                   );
@@ -1135,7 +1136,8 @@ jobs:
                   return enableAutoMerge(
                     prNodeId,
                     headSha,
-                    prNumber
+                    prNumber,
+                    unstableRetries + 1
                   );
                 }
 
