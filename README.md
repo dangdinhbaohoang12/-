@@ -80,7 +80,7 @@ CANCELLED
 EXPIRED
 ```
 
-Approval chain được sinh từ rule engine dựa trên các thuộc tính của permit như loại công việc, risk level, khu vực nguy hiểm và critical work.
+Approval chain được sinh từ rule engine dựa trên các thuộc tính của permit như loại công việc, risk level, khu vực nguy hiểm và critical work. Các cấp duyệt trong sơ đồ chỉ thể hiện thứ tự có thể xảy ra; tùy rule, một số cấp có thể là `NOT_REQUIRED`, nên không phải permit nào cũng cần đủ tất cả các cấp.
 
 ### 👥 RBAC
 
